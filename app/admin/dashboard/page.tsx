@@ -61,6 +61,7 @@ export default function AdminPage() {
     email: "",
     password: "",
     name: "",
+    block: "",
   });
   const { toast } = useToast();
 
@@ -253,9 +254,10 @@ export default function AdminPage() {
         newAssistant.email,
         newAssistant.password,
         newAssistant.name,
+        newAssistant.block,
         color,
       );
-      setNewAssistant({ email: "", password: "", name: "" });
+      setNewAssistant({ email: "", password: "", name: "", block: "" });
       setShowAssistantDialog(false);
       toast({
         title: "Succès",

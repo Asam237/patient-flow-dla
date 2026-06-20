@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { collection, doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { callNextNumber } from "@/lib/queue-service";
+import { callNextNumber, formatNumberToCode } from "@/lib/queue-service";
 import { signOut } from "@/lib/auth-service";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
@@ -24,12 +24,12 @@ import {
   Circle,
   Monitor,
   ChevronRight,
+  PhoneCall,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { QueueNumber, QueueState, User } from "@/lib/types";
 import { motion, AnimatePresence } from "framer-motion";
 import { AnalyticsPanel } from "@/components/analytics-panel";
-import { formatTicket } from "@/lib/utils";
 
 export default function AssistantPage() {
   const router = useRouter();
@@ -37,6 +37,7 @@ export default function AssistantPage() {
   const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
   const [currentState, setCurrentState] = useState<QueueState | null>(null);
   const [loading, setLoading] = useState(false);
+  const [callingId, setCallingId] = useState<string | null>(null);
   const [assistants, setAssistants] = useState<User[]>([]);
   const { toast } = useToast();
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -62,6 +63,7 @@ export default function AssistantPage() {
             return {
               id: doc.id,
               number: data.number,
+              block: (data.block as string) || "block a",
               status: data.status,
               assistantId: data.assistantId || null,
               assistantName: data.assistantName || null,
@@ -69,7 +71,7 @@ export default function AssistantPage() {
               calledAt: data.calledAt?.toDate() || null,
               completedAt: data.completedAt?.toDate() || null,
               serviceDurationSeconds: data.serviceDurationSeconds || null,
-            };
+            } as QueueNumber;
           })
           .sort((a, b) => a.number - b.number);
         setQueueNumbers(numbers);
@@ -83,11 +85,17 @@ export default function AssistantPage() {
           const data = doc.data();
           setCurrentState({
             id: doc.id,
-            currentNumber: data.currentNumber,
-            nextNumber: data.nextNumber,
+            currentNumber: data.currentNumber ?? null,
+            nextNumber: data.nextNumber ?? null,
             currentAssistantId: data.currentAssistantId || null,
+            currentNumberA: data.currentNumberA ?? null,
+            nextNumberA: data.nextNumberA ?? null,
+            currentAssistantIdA: data.currentAssistantIdA || null,
+            currentNumberB: data.currentNumberB ?? null,
+            nextNumberB: data.nextNumberB ?? null,
+            currentAssistantIdB: data.currentAssistantIdB || null,
             updatedAt: data.updatedAt?.toDate() || new Date(),
-          });
+          } as QueueState);
         }
       },
     );
@@ -100,10 +108,13 @@ export default function AssistantPage() {
           email: data.email,
           name: data.name,
           role: data.role,
+          block:
+            data.block || (data.startNumber >= 100 ? "block b" : "block a"),
+          startNumber: data.startNumber ?? 0,
           color: data.color,
           isActive: data.isActive,
           createdAt: data.createdAt?.toDate() || new Date(),
-        };
+        } as User;
       });
       setAssistants(assistantsList);
     });
@@ -115,8 +126,31 @@ export default function AssistantPage() {
     };
   }, [user]);
 
+  const myBlock = (user?.block || "block a").toLowerCase();
+  const isBlockA = myBlock === "block a";
+  const blockKey = isBlockA ? "A" : "B";
+  const blockNumbers = queueNumbers.filter(
+    (n) => (n.block || "block a").toLowerCase() === myBlock,
+  );
+  const waitingCount = blockNumbers.filter(
+    (n) => n.status === "waiting",
+  ).length;
+  const blockCurrentNumber = isBlockA
+    ? currentState?.currentNumberA
+    : currentState?.currentNumberB;
+  const blockNextNumber = isBlockA
+    ? currentState?.nextNumberA
+    : currentState?.nextNumberB;
+  const blockCurrentAssistantId = isBlockA
+    ? currentState?.currentAssistantIdA
+    : currentState?.currentAssistantIdB;
+  const currentAssistant = assistants.find(
+    (a) => a.id === blockCurrentAssistantId,
+  );
+  const isMyTurn = user ? blockCurrentAssistantId === user.id : false;
+
   useEffect(() => {
-    const currentTicket = queueNumbers.find((n) => n.status === "current");
+    const currentTicket = blockNumbers.find((n) => n.status === "current");
     if (!currentTicket?.calledAt) {
       setElapsedSeconds(0);
       return;
@@ -130,7 +164,7 @@ export default function AssistantPage() {
       );
     }, 1000);
     return () => clearInterval(interval);
-  }, [queueNumbers]);
+  }, [queueNumbers, myBlock]);
 
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60)
@@ -140,25 +174,34 @@ export default function AssistantPage() {
     return `${m}:${s}`;
   }
 
+  async function markPreviousCompleted() {
+    const currentTicket = blockNumbers.find((n) => n.status === "current");
+    if (currentTicket?.calledAt) {
+      const elapsedMs = Date.now() - currentTicket.calledAt.getTime();
+      const elapsed = Math.floor(elapsedMs / 1000);
+      const { doc: fsDoc, updateDoc } = await import("firebase/firestore");
+      await updateDoc(fsDoc(db, "queue_numbers", currentTicket.id), {
+        serviceDurationSeconds: elapsed,
+      });
+    }
+  }
+
   async function handleCallNext() {
     if (!user) return;
     try {
       setLoading(true);
-      const currentTicket = queueNumbers.find((n) => n.status === "current");
-      if (currentTicket?.calledAt) {
-        const elapsedMs = Date.now() - currentTicket.calledAt.getTime();
-        const elapsed = Math.floor(elapsedMs / 1000);
-        const { doc: fsDoc, updateDoc } = await import("firebase/firestore");
-        await updateDoc(fsDoc(db, "queue_numbers", currentTicket.id), {
-          serviceDurationSeconds: elapsed,
-          completedAt: new Date(),
-        });
-      }
-      const called = await callNextNumber(user.id, user.name);
+      await markPreviousCompleted();
+      const { data: called, error } = await callNextNumber(
+        user.id,
+        user.name,
+        undefined,
+        myBlock,
+      );
+      if (error) throw new Error(error.message);
       if (called) {
         toast({
           title: "Number Called",
-          description: `Ticket #${called.number} has been called successfully`,
+          description: `Ticket ${formatNumberToCode(called.number)} has been called successfully`,
         });
       } else {
         toast({
@@ -174,6 +217,35 @@ export default function AssistantPage() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleCallSpecific(ticketId: string) {
+    if (!user) return;
+    try {
+      setCallingId(ticketId);
+      await markPreviousCompleted();
+      const { data: called, error } = await callNextNumber(
+        user.id,
+        user.name,
+        ticketId,
+        myBlock,
+      );
+      if (error) throw new Error(error.message);
+      if (called) {
+        toast({
+          title: "Number Called",
+          description: `Ticket ${formatNumberToCode(called.number)} has been called`,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to call ticket",
+        variant: "destructive",
+      });
+    } finally {
+      setCallingId(null);
     }
   }
 
@@ -201,14 +273,6 @@ export default function AssistantPage() {
     );
   }
 
-  const waitingCount = queueNumbers.filter(
-    (n) => n.status === "waiting",
-  ).length;
-  const currentAssistant = assistants.find(
-    (a) => a.id === currentState?.currentAssistantId,
-  );
-  const isMyTurn = currentState?.currentAssistantId === user.id;
-
   return (
     <div className="min-h-screen bg-[#f8fafc] p-4 lg:p-12">
       <div className="max-w-5xl mx-auto space-y-8">
@@ -230,6 +294,9 @@ export default function AssistantPage() {
                 className="text-[10px] uppercase tracking-wider"
               >
                 Online
+              </Badge>
+              <Badge className="text-[10px] uppercase tracking-wider bg-slate-900 border-none">
+                {myBlock.toUpperCase()}
               </Badge>
             </div>
           </div>
@@ -278,9 +345,11 @@ export default function AssistantPage() {
                 <CardHeader className="border-b border-slate-50 pb-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle className="text-xl">Queue Control</CardTitle>
+                      <CardTitle className="text-xl">
+                        Queue Control — {myBlock.toUpperCase()}
+                      </CardTitle>
                       <CardDescription>
-                        Manage incoming visitors
+                        Manage incoming visitors for your block
                       </CardDescription>
                     </div>
                     <Badge variant="outline" className="px-3 py-1">
@@ -295,11 +364,11 @@ export default function AssistantPage() {
                         Current Ticket
                       </p>
                       <p className="text-7xl font-black text-blue-900 tracking-tighter">
-                        {currentState?.currentNumber != null
-                          ? formatTicket(currentState.currentNumber)
+                        {blockCurrentNumber != null
+                          ? formatNumberToCode(blockCurrentNumber)
                           : "--"}
                       </p>
-                      {currentState?.currentNumber && (
+                      {blockCurrentNumber != null && (
                         <div className="mt-3 flex items-center gap-2 bg-blue-100 rounded-full px-3 py-1.5 w-fit">
                           <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                           <span className="text-sm font-bold text-blue-700 tabular-nums">
@@ -327,8 +396,8 @@ export default function AssistantPage() {
                         Next in Line
                       </p>
                       <p className="text-7xl font-black text-slate-300 tracking-tighter">
-                        {currentState?.nextNumber != null
-                          ? formatTicket(currentState.nextNumber)
+                        {blockNextNumber != null
+                          ? formatNumberToCode(blockNextNumber)
                           : "--"}
                       </p>
                     </div>
@@ -336,7 +405,7 @@ export default function AssistantPage() {
 
                   <Button
                     onClick={handleCallNext}
-                    disabled={loading || waitingCount === 0}
+                    disabled={loading}
                     className="w-full h-20 text-xl font-bold rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-[0.98]"
                   >
                     {loading ? (
@@ -356,12 +425,14 @@ export default function AssistantPage() {
                 <CardHeader className="border-b border-slate-50">
                   <div className="flex items-center gap-2">
                     <Users className="w-5 h-5 text-blue-600" />
-                    <CardTitle className="text-lg">Live Queue</CardTitle>
+                    <CardTitle className="text-lg">
+                      Live Queue — {myBlock.toUpperCase()}
+                    </CardTitle>
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
                   <div className="max-h-[600px] overflow-y-auto divide-y divide-slate-50">
-                    {queueNumbers.length === 0 ? (
+                    {blockNumbers.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
                         <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-4">
                           <Users className="w-6 h-6 text-slate-300" />
@@ -372,7 +443,7 @@ export default function AssistantPage() {
                       </div>
                     ) : (
                       <AnimatePresence initial={false}>
-                        {queueNumbers.map((num) => {
+                        {blockNumbers.map((num) => {
                           const numAssistant = assistants.find(
                             (a) => a.id === num.assistantId,
                           );
@@ -393,7 +464,7 @@ export default function AssistantPage() {
                                 <span
                                   className={`text-xl font-black ${isCurrent ? "text-blue-600" : "text-slate-900"}`}
                                 >
-                                  #{formatTicket(num.number)}
+                                  {formatNumberToCode(num.number)}
                                 </span>
                                 <div className="flex flex-col gap-1">
                                   <Badge
@@ -440,6 +511,22 @@ export default function AssistantPage() {
                                     {formatDuration(elapsedSeconds)}
                                   </span>
                                 )}
+                                {isWaiting && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    disabled={callingId === num.id}
+                                    onClick={() => handleCallSpecific(num.id)}
+                                    className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                                    title="Call this ticket"
+                                  >
+                                    {callingId === num.id ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <PhoneCall className="w-4 h-4" />
+                                    )}
+                                  </Button>
+                                )}
                                 <ChevronRight className="w-4 h-4 text-slate-200" />
                               </div>
                             </motion.div>
@@ -456,7 +543,12 @@ export default function AssistantPage() {
 
         {/* Panel Analytics */}
         {activeTab === "analytics" && (
-          <AnalyticsPanel queueNumbers={queueNumbers} assistants={assistants} />
+          <AnalyticsPanel
+            queueNumbers={blockNumbers}
+            assistants={assistants.filter(
+              (a) => (a.block || "block a").toLowerCase() === myBlock,
+            )}
+          />
         )}
       </div>
       <p className="text-center mt-10 text-gray-900 text-xs">

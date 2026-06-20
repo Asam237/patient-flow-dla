@@ -10,7 +10,7 @@ import {
 import { User as FirebaseUser } from "firebase/auth";
 import {
   onAuthChange,
-  getUserData,
+  getUserProfile,
   signOut as firebaseSignOut,
 } from "./auth-service";
 import type { User } from "./types";
@@ -39,7 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setFirebaseUser(firebaseUser);
 
       if (firebaseUser) {
-        const userData = await getUserData(firebaseUser.uid);
+        // Remplacement de getUserData par getUserProfile pour correspondre à n_auth-service.ts
+        const userData = await getUserProfile(firebaseUser.uid);
         setUser(userData);
       } else {
         setUser(null);

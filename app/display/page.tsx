@@ -3,24 +3,27 @@
 import { useState, useEffect, useRef } from "react";
 import { doc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Clock, Volume2, ArrowRight, Users } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Clock, Volume2, Users } from "lucide-react";
 import type { QueueState, User, QueueNumber } from "@/lib/types";
 import images from "@/assets/pictures";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTicket } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 
 export default function DisplayPage() {
-  const [currentState, setCurrentState] = useState<QueueState | null>(null);
+  const [queueState, setQueueState] = useState<any>(null);
   const [assistants, setAssistants] = useState<User[]>([]);
   const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
-  const [isNewNumber, setIsNewNumber] = useState(false);
+  const [isNewNumberA, setIsNewNumberA] = useState(false);
+  const [isNewNumberB, setIsNewNumberB] = useState(false);
   const [time, setTime] = useState<string>("");
   const [isAudioReady, setIsAudioReady] = useState(false);
 
-  const previousNumberRef = useRef<number | null>(null);
+  const previousNumberARef = useRef<number | null>(null);
+  const previousNumberBRef = useRef<number | null>(null);
+  const previousCalledAtARef = useRef<number | null>(null);
+  const previousCalledAtBRef = useRef<number | null>(null);
   const assistantsRef = useRef<User[]>([]);
 
   const htmlAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -28,7 +31,6 @@ export default function DisplayPage() {
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const audioReadyRef = useRef<boolean>(false);
 
-  // Références stables pour stocker les voix dès le départ (Spécial Smart TV)
   const frVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const enVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
@@ -45,16 +47,13 @@ export default function DisplayPage() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setCurrentImageIndex(
-        (prevIndex) => (prevIndex + 1) % carouselImages.length,
-      );
+      setCurrentImageIndex((prev) => (prev + 1) % carouselImages.length);
     }, 15000);
-
     return () => clearInterval(interval);
   }, [carouselImages.length]);
 
   const announcementQueueRef = useRef<
-    Array<{ ticketNumber: number; assistantName?: string }>
+    Array<{ ticketNumber: number; assistantName?: string; blockLabel?: string }>
   >([]);
   const isAnnouncingRef = useRef<boolean>(false);
 
@@ -65,15 +64,12 @@ export default function DisplayPage() {
     try {
       const response = await fetch("/sound.mp3");
       const arrayBuffer = await response.arrayBuffer();
-
       const AudioCtx =
         window.AudioContext || (window as any).webkitAudioContext;
-
       if (AudioCtx) {
         const ctx = new AudioCtx();
         await ctx.resume();
         audioContextRef.current = ctx;
-
         try {
           audioBufferRef.current = await ctx.decodeAudioData(arrayBuffer);
           audioReadyRef.current = true;
@@ -81,7 +77,6 @@ export default function DisplayPage() {
           console.warn("decodeAudioData failed:", error);
         }
       }
-
       if (htmlAudioRef.current) {
         htmlAudioRef.current.volume = 0.01;
         await htmlAudioRef.current.play().catch(() => {});
@@ -89,7 +84,6 @@ export default function DisplayPage() {
         htmlAudioRef.current.currentTime = 0;
         htmlAudioRef.current.volume = 1;
       }
-
       if (typeof window !== "undefined" && window.speechSynthesis) {
         const cacheVoices = () => {
           const voices = window.speechSynthesis.getVoices();
@@ -100,12 +94,10 @@ export default function DisplayPage() {
               voices.find((v) => v.lang.toLowerCase().includes("en")) || null;
           }
         };
-
         cacheVoices();
         if (window.speechSynthesis.onvoiceschanged !== undefined) {
           window.speechSynthesis.onvoiceschanged = cacheVoices;
         }
-
         const warmup = new SpeechSynthesisUtterance(" ");
         warmup.volume = 0;
         window.speechSynthesis.speak(warmup);
@@ -115,9 +107,6 @@ export default function DisplayPage() {
     }
   };
 
-  // =========================
-  // PLAY SOUND BEFORE ANNOUNCE
-  // =========================
   const playNotificationSound = (): Promise<void> => {
     return new Promise((resolve) => {
       if (
@@ -126,7 +115,6 @@ export default function DisplayPage() {
         audioReadyRef.current
       ) {
         const ctx = audioContextRef.current;
-
         const doPlay = () => {
           const source = ctx.createBufferSource();
           source.buffer = audioBufferRef.current!;
@@ -134,7 +122,6 @@ export default function DisplayPage() {
           source.start(0);
           setTimeout(() => resolve(), 200);
         };
-
         if (ctx.state === "suspended") {
           ctx
             .resume()
@@ -145,7 +132,6 @@ export default function DisplayPage() {
         }
         return;
       }
-
       if (htmlAudioRef.current) {
         const audio = htmlAudioRef.current;
         audio.currentTime = 0;
@@ -153,7 +139,6 @@ export default function DisplayPage() {
         setTimeout(() => resolve(), 200);
         return;
       }
-
       resolve();
     });
   };
@@ -161,41 +146,41 @@ export default function DisplayPage() {
   const processQueue = async () => {
     if (isAnnouncingRef.current) return;
     if (announcementQueueRef.current.length === 0) return;
-
     isAnnouncingRef.current = true;
-
     while (announcementQueueRef.current.length > 0) {
       const next = announcementQueueRef.current.shift()!;
-      await announceTicketBilingual(next.ticketNumber, next.assistantName);
+      await announceTicketBilingual(
+        next.ticketNumber,
+        next.assistantName,
+        next.blockLabel,
+      );
     }
-
     isAnnouncingRef.current = false;
   };
 
   const announceTicketBilingual = async (
     ticketNumber: number,
     assistantName?: string,
+    blockLabel?: string,
   ) => {
     await playNotificationSound();
-
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-
     window.speechSynthesis.cancel();
 
     const formatted = formatTicket(ticketNumber);
     const guichetNumber = assistantName ? assistantName.replace(/\D/g, "") : "";
+    const blockFr = blockLabel ? `, ${blockLabel}` : "";
 
     const frText = guichetNumber
-      ? `Numéro ${formatted}, veuillez vous rendre au box numéro ${guichetNumber}`
-      : `Numéro ${formatted}, veuillez vous rendre au box ${assistantName || ""}`;
+      ? `Numéro ${formatted}${blockFr}, veuillez vous rendre au box numéro ${guichetNumber}`
+      : `Numéro ${formatted}${blockFr}, veuillez vous rendre au box ${assistantName || ""}`;
 
     const enText = guichetNumber
       ? `Ticket number ${formatted}, please proceed to box number ${guichetNumber}`
-      : `Ticket number ${formatted}, please proceed to box number ${assistantName || ""}`;
+      : `Ticket number ${formatted}, please proceed to box ${assistantName || ""}`;
 
     const getPreferredFrVoice = (): SpeechSynthesisVoice | null => {
       const voices = window.speechSynthesis.getVoices();
-
       const preferredNames = [
         "google french",
         "thomas",
@@ -203,7 +188,6 @@ export default function DisplayPage() {
         "marie",
         "juliette",
       ];
-
       for (const preferred of preferredNames) {
         const match = voices.find(
           (v) =>
@@ -211,21 +195,16 @@ export default function DisplayPage() {
         );
         if (match) return match;
       }
-
       const frFR = voices.find(
         (v) =>
           v.lang === "fr-FR" &&
           !v.name.toLowerCase().includes("swiss") &&
-          !v.name.toLowerCase().includes("suisse") &&
-          !v.name.toLowerCase().includes("ch") &&
           !v.name.toLowerCase().includes("canada") &&
           !v.name.toLowerCase().includes("québec"),
       );
-      const anyFrFR = voices.find((v) => v.lang === "fr-FR");
-      if (anyFrFR) return anyFrFR;
+      if (frFR) return frFR;
       const anyFr = voices.find((v) => v.lang.startsWith("fr"));
       if (anyFr) return anyFr;
-
       return frVoiceRef.current;
     };
 
@@ -240,14 +219,11 @@ export default function DisplayPage() {
         const msg = new SpeechSynthesisUtterance(text);
         msg.lang = lang;
         if (voice) msg.voice = voice;
-
         msg.rate = 0.82;
         msg.pitch = 0.85;
         msg.volume = 1;
-
         msg.onend = () => resolve();
         msg.onerror = () => resolve();
-
         msg.onstart = () => {
           if ((window.speechSynthesis as any)._keepAlive) return;
           (window.speechSynthesis as any)._keepAlive = setInterval(() => {
@@ -260,14 +236,12 @@ export default function DisplayPage() {
             }
           }, 5000);
         };
-
         window.speechSynthesis.speak(msg);
       });
     };
 
     await speakWithPromise(frText, "fr-FR", preferredFrVoice);
     await speakWithPromise(frText, "fr-FR", preferredFrVoice);
-
     await speakWithPromise(enText, "en-US", enVoiceRef.current);
     await speakWithPromise(enText, "en-US", enVoiceRef.current);
   };
@@ -278,46 +252,89 @@ export default function DisplayPage() {
       (docSnap) => {
         if (!docSnap.exists()) return;
         const data = docSnap.data();
-        const newNumber = data.currentNumber;
 
-        if (newNumber !== null && newNumber !== previousNumberRef.current) {
-          const assistantId = data.currentAssistantId;
+        // Détection changement Block A — on se base sur l'horodatage de
+        // l'appel (calledAtA) pour annoncer CHAQUE appel, même un rappel du
+        // même numéro.
+        const newNumberA = data.currentNumberA ?? null;
+        const calledAtAMillis: number | null =
+          data.calledAtA?.toMillis?.() ?? null;
+        const isNewCallA =
+          newNumberA !== null &&
+          calledAtAMillis !== null &&
+          calledAtAMillis !== previousCalledAtARef.current;
+        if (isNewCallA) {
+          const assistantId = data.currentAssistantIdA;
           const assistant = assistantsRef.current.find(
             (a) => a.id === assistantId,
           );
-
-          if (assistant?.name) {
+          const queueAnnounceFn = (name?: string) => {
             announcementQueueRef.current.push({
-              ticketNumber: newNumber,
-              assistantName: assistant.name,
+              ticketNumber: newNumberA,
+              assistantName: name,
+              blockLabel: "Block A",
             });
             processQueue();
-          } else {
-            setTimeout(() => {
-              const retryAssistant = assistantsRef.current.find(
-                (a) => a.id === assistantId,
-              );
-              announcementQueueRef.current.push({
-                ticketNumber: newNumber,
-                assistantName: retryAssistant?.name || "Guichet",
-              });
-              processQueue();
-            }, 500);
-          }
+          };
+          const assistantName =
+            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
+            "Guichet";
+          announcementQueueRef.current.push({
+            ticketNumber: newNumberA,
+            assistantName,
+            blockLabel: "Block A",
+          });
 
-          setIsNewNumber(true);
-          setTimeout(() => setIsNewNumber(false), 6000);
+          processQueue();
+          setIsNewNumberA(true);
+          setTimeout(() => setIsNewNumberA(false), 6000);
+        }
+        previousNumberARef.current = newNumberA;
+        if (calledAtAMillis !== null) {
+          previousCalledAtARef.current = calledAtAMillis;
         }
 
-        previousNumberRef.current = newNumber;
+        // Détection changement Block B — même logique basée sur calledAtB.
+        const newNumberB = data.currentNumberB ?? null;
+        const calledAtBMillis: number | null =
+          data.calledAtB?.toMillis?.() ?? null;
+        const isNewCallB =
+          newNumberB !== null &&
+          calledAtBMillis !== null &&
+          calledAtBMillis !== previousCalledAtBRef.current;
+        if (isNewCallB) {
+          const assistantId = data.currentAssistantIdB;
+          const assistant = assistantsRef.current.find(
+            (a) => a.id === assistantId,
+          );
+          const queueAnnounceFn = (name?: string) => {
+            announcementQueueRef.current.push({
+              ticketNumber: newNumberB,
+              assistantName: name,
+              blockLabel: "Block B",
+            });
+            processQueue();
+          };
+          const assistantName =
+            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
+            "Guichet";
 
-        setCurrentState({
-          id: docSnap.id,
-          currentNumber: newNumber,
-          nextNumber: data.nextNumber,
-          currentAssistantId: data.currentAssistantId || null,
-          updatedAt: data.updatedAt?.toDate() || new Date(),
-        });
+          announcementQueueRef.current.push({
+            ticketNumber: newNumberB,
+            assistantName,
+            blockLabel: "Block B",
+          });
+
+          processQueue();
+          setIsNewNumberB(true);
+          setTimeout(() => setIsNewNumberB(false), 6000);
+        }
+        previousNumberBRef.current = newNumberB;
+        if (calledAtBMillis !== null) {
+          previousCalledAtBRef.current = calledAtBMillis;
+        }
+
+        setQueueState(data);
       },
     );
 
@@ -326,7 +343,7 @@ export default function DisplayPage() {
       (snapshot) => {
         const list = snapshot.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }) as User)
-          .filter((user) => user.role === "assistant");
+          .filter((u) => u.role === "assistant");
         assistantsRef.current = list;
         setAssistants(list);
       },
@@ -341,6 +358,7 @@ export default function DisplayPage() {
             return {
               id: doc.id,
               number: data.number,
+              block: data.block || "",
               status: data.status,
               assistantId: data.assistantId || null,
               assistantName: data.assistantName || null,
@@ -379,9 +397,21 @@ export default function DisplayPage() {
     return () => clearInterval(interval);
   }, []);
 
-  const currentAssistant = assistants.find(
-    (a) => a.id === currentState?.currentAssistantId,
+  const currentAssistantA = assistants.find(
+    (a) => a.id === queueState?.currentAssistantIdA,
   );
+  const currentAssistantB = assistants.find(
+    (a) => a.id === queueState?.currentAssistantIdB,
+  );
+
+  const waitingA = queueNumbers.filter(
+    (n) =>
+      (n as any).block?.toLowerCase() === "block a" && n.status === "waiting",
+  ).length;
+  const waitingB = queueNumbers.filter(
+    (n) =>
+      (n as any).block?.toLowerCase() === "block b" && n.status === "waiting",
+  ).length;
 
   return (
     <div className="h-screen bg-[#084B9A] text-slate-900 overflow-hidden font-sans flex flex-col p-6 lg:p-10">
@@ -422,7 +452,7 @@ export default function DisplayPage() {
       )}
 
       {/* Header */}
-      <header className="flex justify-between items-center mb-10">
+      <header className="flex justify-between items-center mb-8">
         <div className="bg-white/10 backdrop-blur-md p-5 rounded-3xl border border-white/20">
           <Image
             src={images.iomlogo}
@@ -433,9 +463,8 @@ export default function DisplayPage() {
           />
         </div>
 
-        {/* Bloc Spécial Affichage TV / Projection (Non cliquable, lisibilité maximale) */}
+        {/* URL feedback */}
         <div className="flex items-center gap-6 px-8 py-5 bg-gradient-to-r from-blue-600/20 to-indigo-600/20 backdrop-blur-xl rounded-3xl border-2 border-blue-400/40 shadow-2xl shadow-blue-500/10">
-          {/* Icône Smartphone + Saisie (parfait pour comprendre qu'il faut sortir son téléphone) */}
           <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-yellow-400 text-slate-900 shadow-lg shadow-yellow-400/20 animate-bounce [animation-duration:3s]">
             <svg
               className="w-8 h-8"
@@ -451,17 +480,12 @@ export default function DisplayPage() {
               />
             </svg>
           </div>
-
           <div className="flex flex-col gap-2">
-            {/* Instruction textuelle ultra-directive pour le spectateur */}
             <span className="text-xs font-black uppercase tracking-widest text-yellow-400 flex items-center gap-2">
               <span className="inline-block w-2 h-2 rounded-full bg-yellow-400 animate-ping" />
-              Pour donner votre avis, tapez l'adresse :
+              Pour donner votre avis, tapez l&apos;adresse :
             </span>
-
-            {/* L'URL formatée comme une vraie barre de recherche / navigateur */}
             <div className="flex items-center gap-3 px-5 py-3 bg-black/60 rounded-2xl border border-white/20 shadow-inner">
-              {/* Le protocole web pour déclencher le réflexe "site internet" dans le cerveau */}
               <span className="text-sm font-bold text-white/95 tracking-tight font-mono select-none">
                 https://
               </span>
@@ -487,85 +511,174 @@ export default function DisplayPage() {
       </header>
 
       {/* Main Content */}
-      <main className="flex-1 grid grid-cols-12 gap-8 mb-6 overflow-hidden">
-        {/* Ticket Actuel */}
+      <main className="flex-1 grid grid-cols-12 gap-6 mb-6 overflow-hidden">
+        {/* ======== BLOCK A ======== */}
         <motion.div
           animate={
-            isNewNumber
+            isNewNumberA
               ? {
                   scale: [1, 1.02, 1],
-                  transition: { duration: 0.5, repeat: 5 },
+                  transition: { duration: 0.5, repeat: 4 },
                 }
               : {}
           }
           className="col-span-12 lg:col-span-5 h-full"
         >
-          <Card className="h-full bg-white border-0 shadow-2xl rounded-[4rem] overflow-hidden relative flex flex-col">
+          <Card className="h-full bg-white border-0 shadow-2xl rounded-[3.5rem] overflow-hidden relative flex flex-col">
+            {/* Barre couleur top Block A */}
             <div className="absolute top-0 left-0 w-full h-4 bg-blue-600" />
-            <div className="p-12 flex flex-col h-full">
-              <span className="text-blue-600 uppercase tracking-widest font-black text-xl mb-4">
+            <div className="p-10 flex flex-col h-full">
+              {/* Label block */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-blue-600 uppercase tracking-widest font-black text-lg">
+                  Block A
+                </span>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-100">
+                  <Users className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm font-bold text-blue-600">
+                    {waitingA} en attente
+                  </span>
+                </div>
+              </div>
+              <span className="text-slate-400 text-sm font-semibold mb-4">
                 Ticket Actuel / Current Ticket
               </span>
 
               <div className="flex-1 flex items-center justify-center">
                 <AnimatePresence mode="wait">
                   <motion.div
-                    key={currentState?.currentNumber}
-                    initial={{ y: 50, opacity: 0 }}
+                    key={queueState?.currentNumberA}
+                    initial={{ y: 40, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
-                    className="text-[12rem] xl:text-[18rem] leading-none font-black text-blue-600 tabular-nums"
+                    className="text-[10rem] xl:text-[14rem] leading-none font-black text-blue-600 tabular-nums"
                   >
-                    {currentState?.currentNumber != null
-                      ? formatTicket(currentState.currentNumber)
+                    {queueState?.currentNumberA != null
+                      ? formatTicket(queueState.currentNumberA)
                       : "--"}
                   </motion.div>
                 </AnimatePresence>
               </div>
 
-              {currentAssistant && (
-                <div className="mt-6 pt-10 border-t-2 border-slate-50 flex items-center justify-between">
+              {currentAssistantA && (
+                <div className="mt-4 pt-8 border-t-2 border-slate-50 flex items-center justify-between">
                   <div>
-                    <p className="text-xl uppercase text-slate-400 font-black">
+                    <p className="text-base uppercase text-slate-400 font-black">
                       Allez au guichet / Go to
                     </p>
-                    <p className="text-5xl font-black text-slate-800">
-                      {currentAssistant?.name}
+                    <p className="text-4xl font-black text-slate-800">
+                      {currentAssistantA.name}
                     </p>
                   </div>
                   <div
-                    className="h-24 w-24 rounded-2xl flex items-center justify-center text-white text-4xl font-black shadow-xl"
+                    className="h-20 w-20 rounded-2xl flex items-center justify-center text-white text-3xl font-black shadow-xl"
                     style={{
-                      backgroundColor: currentAssistant?.color || "#3b82f6",
+                      backgroundColor: currentAssistantA.color || "#3b82f6",
                     }}
                   >
-                    {currentAssistant?.name.match(/\d+/) || "!"}
+                    {currentAssistantA.name.match(/\d+/) || "!"}
                   </div>
                 </div>
               )}
+
+              {/* Suivant Block A */}
+              <div className="mt-4 flex items-center gap-3 px-5 py-3 bg-blue-50 rounded-2xl border border-blue-100">
+                <span className="text-xs font-black text-blue-400 uppercase tracking-widest">
+                  Suivant / Next
+                </span>
+                <span className="text-2xl font-black text-blue-300 tabular-nums ml-auto">
+                  {queueState?.nextNumberA != null
+                    ? formatTicket(queueState.nextNumberA)
+                    : "--"}
+                </span>
+              </div>
             </div>
           </Card>
         </motion.div>
 
-        {/* Prochain Ticket */}
-        <Card className="col-span-12 lg:col-span-3 bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-[4rem] overflow-hidden flex flex-col p-10 text-center">
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <ArrowRight className="w-6 h-6 text-white/50" />
-            <span className="text-white/60 uppercase font-bold text-xl">
-              Suivant / Next
-            </span>
-          </div>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-[8rem] leading-none font-black text-white/40 tabular-nums">
-              {currentState?.nextNumber != null
-                ? formatTicket(currentState.nextNumber)
-                : "--"}
+        {/* ======== BLOCK B ======== */}
+        <motion.div
+          animate={
+            isNewNumberB
+              ? {
+                  scale: [1, 1.02, 1],
+                  transition: { duration: 0.5, repeat: 4 },
+                }
+              : {}
+          }
+          className="col-span-12 lg:col-span-4 h-full"
+        >
+          <Card className="h-full bg-white border-0 shadow-2xl rounded-[3.5rem] overflow-hidden relative flex flex-col">
+            {/* Barre couleur top Block B */}
+            <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-r from-purple-600 to-pink-600" />
+            <div className="p-10 flex flex-col h-full">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-purple-600 uppercase tracking-widest font-black text-lg">
+                  Block B
+                </span>
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 rounded-full border border-purple-100">
+                  <Users className="w-4 h-4 text-purple-400" />
+                  <span className="text-sm font-bold text-purple-600">
+                    {waitingB} en attente
+                  </span>
+                </div>
+              </div>
+              <span className="text-slate-400 text-sm font-semibold mb-4">
+                Ticket Actuel / Current Ticket
+              </span>
+
+              <div className="flex-1 flex items-center justify-center">
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={queueState?.currentNumberB}
+                    initial={{ y: 40, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    className="text-[10rem] xl:text-[14rem] leading-none font-black text-purple-600 tabular-nums"
+                  >
+                    {queueState?.currentNumberB != null
+                      ? formatTicket(queueState.currentNumberB)
+                      : "--"}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+
+              {currentAssistantB && (
+                <div className="mt-4 pt-8 border-t-2 border-slate-50 flex items-center justify-between">
+                  <div>
+                    <p className="text-base uppercase text-slate-400 font-black">
+                      Allez au guichet / Go to
+                    </p>
+                    <p className="text-4xl font-black text-slate-800">
+                      {currentAssistantB.name}
+                    </p>
+                  </div>
+                  <div
+                    className="h-20 w-20 rounded-2xl flex items-center justify-center text-white text-3xl font-black shadow-xl"
+                    style={{
+                      backgroundColor: currentAssistantB.color || "#9333ea",
+                    }}
+                  >
+                    {currentAssistantB.name.match(/\d+/) || "!"}
+                  </div>
+                </div>
+              )}
+
+              {/* Suivant Block B */}
+              <div className="mt-4 flex items-center gap-3 px-5 py-3 bg-purple-50 rounded-2xl border border-purple-100">
+                <span className="text-xs font-black text-purple-400 uppercase tracking-widest">
+                  Suivant / Next
+                </span>
+                <span className="text-2xl font-black text-purple-300 tabular-nums ml-auto">
+                  {queueState?.nextNumberB != null
+                    ? formatTicket(queueState.nextNumberB)
+                    : "--"}
+                </span>
+              </div>
             </div>
-          </div>
-          <p className="text-white/50 text-xl font-bold italic">
-            Préparez-vous / Get ready
-          </p>
-        </Card>
-        <Card className="col-span-12 lg:col-span-4 border-none shadow-2xl rounded-[3rem] overflow-hidden bg-white/10 backdrop-blur-xl border-white/20">
+          </Card>
+        </motion.div>
+
+        {/* ======== CAROUSEL ======== */}
+        <Card className="col-span-12 lg:col-span-3 border-none shadow-2xl rounded-[3rem] overflow-hidden bg-white/10 backdrop-blur-xl border-white/20">
           <CardContent className="h-full p-0 flex flex-col">
             <AnimatePresence mode="wait">
               <motion.div
@@ -592,14 +705,13 @@ export default function DisplayPage() {
                   className="mt-3 pb-2"
                 >
                   <div className="bg-white/15 backdrop-blur-md rounded-2xl px-6 py-4">
-                    <h3 className="text-center text-white text-lg font-semibold leading-relaxed">
+                    <h3 className="text-center text-white text-base font-semibold leading-relaxed">
                       {carouselData[currentImageIndex].title}
                     </h3>
                   </div>
                 </motion.div>
               </motion.div>
             </AnimatePresence>
-            {/* Pagination */}
             <div className="flex justify-center gap-2 pb-4">
               {carouselImages.map((_, index) => (
                 <button

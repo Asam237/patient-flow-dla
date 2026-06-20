@@ -6,6 +6,8 @@ export interface User {
   name: string;
   role: UserRole;
   color?: string;
+  block?: string;
+  startNumber?: number;
   isActive: boolean;
   createdAt: Date;
 }
@@ -16,6 +18,7 @@ export interface QueueNumber {
   status: "waiting" | "current" | "completed";
   assistantId?: string | null;
   assistantName?: string | null;
+  block?: string | null;
   createdAt: Date;
   calledAt?: Date | null;
   completedAt?: Date | null;
@@ -28,4 +31,10 @@ export interface QueueState {
   nextNumber: number | null;
   currentAssistantId?: string | null;
   updatedAt: Date;
+  currentNumberA?: number | null;
+  nextNumberA?: number | null;
+  currentAssistantIdA?: string | null;
+  currentNumberB?: number | null;
+  nextNumberB?: number | null;
+  currentAssistantIdB?: string | null;
 }
