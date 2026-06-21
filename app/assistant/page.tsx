@@ -203,11 +203,6 @@ export default function AssistantPage() {
           title: "Number Called",
           description: `Ticket ${formatNumberToCode(called.number)} has been called successfully`,
         });
-      } else {
-        toast({
-          title: "Info",
-          description: "No tickets currently in the queue",
-        });
       }
     } catch (error: any) {
       toast({
