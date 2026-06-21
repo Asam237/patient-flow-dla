@@ -164,23 +164,28 @@ export default function DisplayPage() {
     blockLabel?: string,
   ) => {
     await playNotificationSound();
+
     if (typeof window === "undefined" || !window.speechSynthesis) return;
+
     window.speechSynthesis.cancel();
 
     const formatted = formatTicket(ticketNumber);
     const guichetNumber = assistantName ? assistantName.replace(/\D/g, "") : "";
+
     const blockFr = blockLabel ? `, ${blockLabel}` : "";
+    const blockEn = blockLabel ? `, ${blockLabel}` : "";
 
     const frText = guichetNumber
       ? `Numéro ${formatted}${blockFr}, veuillez vous rendre au box numéro ${guichetNumber}`
       : `Numéro ${formatted}${blockFr}, veuillez vous rendre au box ${assistantName || ""}`;
 
     const enText = guichetNumber
-      ? `Ticket number ${formatted}, please proceed to box number ${guichetNumber}`
-      : `Ticket number ${formatted}, please proceed to box ${assistantName || ""}`;
+      ? `Ticket number ${formatted}${blockEn}, please proceed to box number ${guichetNumber}`
+      : `Ticket number ${formatted}${blockEn}, please proceed to box ${assistantName || ""}`;
 
     const getPreferredFrVoice = (): SpeechSynthesisVoice | null => {
       const voices = window.speechSynthesis.getVoices();
+
       const preferredNames = [
         "google french",
         "thomas",
@@ -188,6 +193,7 @@ export default function DisplayPage() {
         "marie",
         "juliette",
       ];
+
       for (const preferred of preferredNames) {
         const match = voices.find(
           (v) =>
@@ -195,16 +201,23 @@ export default function DisplayPage() {
         );
         if (match) return match;
       }
+
       const frFR = voices.find(
         (v) =>
           v.lang === "fr-FR" &&
           !v.name.toLowerCase().includes("swiss") &&
+          !v.name.toLowerCase().includes("suisse") &&
+          !v.name.toLowerCase().includes("ch") &&
           !v.name.toLowerCase().includes("canada") &&
           !v.name.toLowerCase().includes("québec"),
       );
-      if (frFR) return frFR;
+
+      const anyFrFR = voices.find((v) => v.lang === "fr-FR");
+      if (anyFrFR) return anyFrFR;
+
       const anyFr = voices.find((v) => v.lang.startsWith("fr"));
       if (anyFr) return anyFr;
+
       return frVoiceRef.current;
     };
 
@@ -217,15 +230,23 @@ export default function DisplayPage() {
     ): Promise<void> => {
       return new Promise((resolve) => {
         const msg = new SpeechSynthesisUtterance(text);
+
         msg.lang = lang;
-        if (voice) msg.voice = voice;
+
+        if (voice) {
+          msg.voice = voice;
+        }
+
         msg.rate = 0.82;
         msg.pitch = 0.85;
         msg.volume = 1;
+
         msg.onend = () => resolve();
         msg.onerror = () => resolve();
+
         msg.onstart = () => {
           if ((window.speechSynthesis as any)._keepAlive) return;
+
           (window.speechSynthesis as any)._keepAlive = setInterval(() => {
             if (!window.speechSynthesis.speaking) {
               clearInterval((window.speechSynthesis as any)._keepAlive);
@@ -236,12 +257,16 @@ export default function DisplayPage() {
             }
           }, 5000);
         };
+
         window.speechSynthesis.speak(msg);
       });
     };
 
+    // Français x2
     await speakWithPromise(frText, "fr-FR", preferredFrVoice);
     await speakWithPromise(frText, "fr-FR", preferredFrVoice);
+
+    // Anglais x2
     await speakWithPromise(enText, "en-US", enVoiceRef.current);
     await speakWithPromise(enText, "en-US", enVoiceRef.current);
   };
@@ -253,9 +278,6 @@ export default function DisplayPage() {
         if (!docSnap.exists()) return;
         const data = docSnap.data();
 
-        // Détection changement Block A — on se base sur l'horodatage de
-        // l'appel (calledAtA) pour annoncer CHAQUE appel, même un rappel du
-        // même numéro.
         const newNumberA = data.currentNumberA ?? null;
         const calledAtAMillis: number | null =
           data.calledAtA?.toMillis?.() ?? null;
