@@ -191,7 +191,7 @@ export default function AssistantPage() {
     try {
       setLoading(true);
       await markPreviousCompleted();
-      const { data: called, error } = await callNextNumber(
+      const { data: called, error }: any = await callNextNumber(
         user.id,
         user.name,
         undefined,
@@ -220,7 +220,7 @@ export default function AssistantPage() {
     try {
       setCallingId(ticketId);
       await markPreviousCompleted();
-      const { data: called, error } = await callNextNumber(
+      const { data: called, error }: any = await callNextNumber(
         user.id,
         user.name,
         ticketId,
