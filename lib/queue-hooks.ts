@@ -63,10 +63,12 @@ export async function completeNumber(block?: string) {
   }
 }
 
-export async function addNewQueueNumber(block: string): Promise<QueueNumber> {
+export async function addNewQueueNumber(
+  block?: "block a" | "block b",
+): Promise<QueueNumber> {
   const allNumbers = await getAllQueueNumbers();
   const blockNumbers = allNumbers.filter(
-    (n) => n.block?.toLowerCase() === block.toLowerCase(),
+    (n) => n.block?.toLowerCase() === block?.toLowerCase(),
   );
 
   // Initialisation à -1 pour que le premier numéro généré soit 0 (ex: A00)
