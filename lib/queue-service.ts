@@ -42,11 +42,11 @@ export function formatNumberToCode(num: number): string {
  */
 export async function addNumberToQueue(
   number: number,
-  block: "block a" | "block b",
+  block?: "block a" | "block b",
 ): Promise<QueueNumber> {
   const docRef = await addDoc(collection(db, QUEUE_NUMBERS_COLLECTION), {
     number,
-    block: block.toLowerCase(),
+    block: block?.toLowerCase(),
     status: "waiting",
     assistantId: null,
     assistantName: null,
@@ -62,7 +62,7 @@ export async function addNumberToQueue(
   const stateSnap = await getDoc(stateRef);
   const stateData = stateSnap.exists() ? stateSnap.data() : {};
 
-  const blockKey = block.toLowerCase() === "block a" ? "A" : "B";
+  const blockKey = block?.toLowerCase() === "block a" ? "A" : "B";
   const currentNextKey = `nextNumber${blockKey}`;
   const currentCurrentKey = `currentNumber${blockKey}`;
 

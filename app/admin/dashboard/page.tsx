@@ -249,7 +249,8 @@ export default function AdminPage() {
 
     try {
       setLoading(true);
-      const color = assistantColors[assistants.length % assistantColors.length];
+      const color: any =
+        assistantColors[assistants.length % assistantColors.length];
       await createAssistantAccount(
         newAssistant.email,
         newAssistant.password,
