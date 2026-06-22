@@ -63,9 +63,7 @@ export async function completeNumber(block?: string) {
   }
 }
 
-export async function addNewQueueNumber(
-  block: "block a" | "block b",
-): Promise<QueueNumber> {
+export async function addNewQueueNumber(block: string): Promise<QueueNumber> {
   const allNumbers = await getAllQueueNumbers();
   const blockNumbers = allNumbers.filter(
     (n) => n.block?.toLowerCase() === block.toLowerCase(),
