@@ -35,6 +35,7 @@ import {
   LayoutDashboard,
   Hash,
   BarChart3,
+  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { QueueNumber, QueueState, User } from "@/lib/types";
@@ -48,14 +49,24 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { AnalyticsPanel } from "@/components/analytics-panel";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type Block = "block a" | "block b";
 
 export default function AdminPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const [newNumberA, setNewNumberA] = useState("");
-  const [newNumberB, setNewNumberB] = useState("");
+  const [newNumberA, setNewNumberA] = useState({ start: "", end: "" });
+  const [newNumberB, setNewNumberB] = useState({ start: "", end: "" });
   const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
   const [currentState, setCurrentState] = useState<QueueState | null>(null);
   const [loading, setLoading] = useState(false);
@@ -72,6 +83,15 @@ export default function AdminPage() {
     startNumber: "",
   });
   const { toast } = useToast();
+
+  // États pour le dialogue de conflit
+  const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
+  const [conflictNumbers, setConflictNumbers] = useState<number[]>([]);
+  const [pendingRange, setPendingRange] = useState<{
+    start: number;
+    end: number;
+    block: Block;
+  } | null>(null);
 
   const assistantColors = [
     "#6366f1",
@@ -167,6 +187,150 @@ export default function AdminPage() {
     };
   }, [user]);
 
+  // Ajouter une plage pour un bloc donné avec gestion des conflits
+  async function handleAddRange(block: Block, start: number, end: number) {
+    if (isNaN(start) || isNaN(end) || start < 0 || end < 0 || start > end) {
+      toast({
+        title: "Invalid range",
+        description: "Please enter valid numbers (start ≤ end).",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Vérifier les numéros existants dans ce même bloc
+    const existingInSameBlock = queueNumbers.filter(
+      (n) =>
+        n.block === block &&
+        n.number >= start &&
+        n.number <= end &&
+        n.status !== "completed",
+    );
+    if (existingInSameBlock.length > 0) {
+      toast({
+        title: "Some tickets already exist in this block",
+        description: `The following numbers will be skipped: ${existingInSameBlock.map((n) => n.number).join(", ")}`,
+        variant: "default",
+      });
+    }
+
+    // Vérifier les conflits dans l'autre bloc
+    const otherBlock = block === "block a" ? "block b" : "block a";
+    const conflictingNumbers = queueNumbers
+      .filter(
+        (n) =>
+          n.block === otherBlock &&
+          n.number >= start &&
+          n.number <= end &&
+          n.status !== "completed",
+      )
+      .map((n) => n.number);
+
+    if (conflictingNumbers.length > 0) {
+      // Ouvrir le dialogue de conflit
+      setConflictNumbers(conflictingNumbers);
+      setPendingRange({ start, end, block });
+      setConflictDialogOpen(true);
+      return;
+    }
+
+    // Pas de conflit : ajouter directement la plage (en ignorant les doublons dans le même bloc)
+    await addNumbersToBlock(
+      block,
+      start,
+      end,
+      existingInSameBlock.map((n) => n.number),
+    );
+  }
+
+  // Ajout effectif des numéros (après résolution de conflit ou directement)
+  async function addNumbersToBlock(
+    block: Block,
+    start: number,
+    end: number,
+    skipNumbers: number[] = [],
+  ) {
+    try {
+      setLoading(true);
+      let added = 0;
+      for (let num = start; num <= end; num++) {
+        if (skipNumbers.includes(num)) continue;
+        // Vérification de sécurité (si un numéro a été ajouté entre temps)
+        const alreadyExists = queueNumbers.some(
+          (n) => n.number === num && n.status !== "completed",
+        );
+        if (alreadyExists) continue;
+        await addNumberToQueue(num, block);
+        added++;
+      }
+      if (added > 0) {
+        toast({
+          title: "Success",
+          description: `${added} ticket${added > 1 ? "s" : ""} added to ${block.toUpperCase()}.`,
+        });
+      } else {
+        toast({
+          title: "No new tickets",
+          description: "All numbers in the range already exist.",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Could not add tickets.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Résoudre le conflit : supprimer les numéros de l'autre bloc et ajouter au bloc cible
+  async function handleResolveConflict() {
+    if (!pendingRange) return;
+    const { start, end, block } = pendingRange;
+    try {
+      setLoading(true);
+      setConflictDialogOpen(false);
+
+      // Supprimer les numéros en conflit (dans l'autre bloc)
+      const otherBlock = block === "block a" ? "block b" : "block a";
+      const toDelete = queueNumbers.filter(
+        (n) =>
+          n.block === otherBlock &&
+          n.number >= start &&
+          n.number <= end &&
+          n.status !== "completed",
+      );
+      for (const item of toDelete) {
+        await deleteQueueNumber(item.id);
+      }
+
+      // Ajouter au bloc cible (en ignorant les éventuels doublons résiduels)
+      await addNumbersToBlock(block, start, end, []);
+
+      toast({
+        title: "Conflict resolved",
+        description: `Tickets moved from ${otherBlock.toUpperCase()} to ${block.toUpperCase()}.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Could not resolve conflict.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+      setPendingRange(null);
+    }
+  }
+
+  function handleCancelConflict() {
+    setConflictDialogOpen(false);
+    setPendingRange(null);
+  }
+
+  // Fonctions existantes
   async function handleAddNumber(block: Block) {
     try {
       setLoading(true);
@@ -186,35 +350,22 @@ export default function AdminPage() {
     }
   }
 
-  async function handleAddCustomNumber(block: Block, raw: string) {
-    if (!raw.trim()) return;
-    const numberValue = parseInt(raw);
-    if (isNaN(numberValue)) {
+  // Remplacer l'ancienne handleAddCustomNumber par handleAddRangeFromInput
+  function handleAddRangeFromInput(
+    block: Block,
+    input: { start: string; end: string },
+  ) {
+    const start = parseInt(input.start);
+    const end = parseInt(input.end);
+    if (isNaN(start) || isNaN(end)) {
       toast({
-        title: "Error",
-        description: "Invalid number",
+        title: "Invalid numbers",
+        description: "Please enter valid numbers.",
         variant: "destructive",
       });
       return;
     }
-    try {
-      setLoading(true);
-      await addNumberToQueue(numberValue, block);
-      if (block === "block a") setNewNumberA("");
-      else setNewNumberB("");
-      toast({
-        title: "Success",
-        description: `Ticket ${formatNumberToCode(numberValue)} added`,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
+    handleAddRange(block, start, end);
   }
 
   async function handleDelete(id: string) {
@@ -383,16 +534,14 @@ export default function AdminPage() {
     numbers,
     inputValue,
     onInputChange,
-    onAuto,
-    onCustom,
+    onRangeAdd,
   }: {
     label: string;
     color: "indigo" | "cyan";
     numbers: QueueNumber[];
-    inputValue: string;
-    onInputChange: (v: string) => void;
-    onAuto: () => void;
-    onCustom: () => void;
+    inputValue: { start: string; end: string };
+    onInputChange: (v: { start: string; end: string }) => void;
+    onRangeAdd: () => void;
   }) {
     const btnBg =
       color === "indigo"
@@ -403,33 +552,42 @@ export default function AdminPage() {
         <CardContent className="p-8 space-y-6">
           <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
             <Label className="text-slate-600 font-semibold mb-3 block">
-              {label} — Issue Ticket
+              {label} — Issue Tickets (Range)
             </Label>
-            <div className="flex gap-3 flex-wrap">
-              <Button
-                onClick={onAuto}
-                disabled={loading}
-                className={`h-14 px-6 ${btnBg} rounded-xl`}
-              >
-                <Plus className="w-5 h-5 mr-2" /> Auto Next
-              </Button>
-              <Input
-                type="number"
-                placeholder="Custom ticket #"
-                value={inputValue}
-                onChange={(e) => onInputChange(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && onCustom()}
-                className="h-14 text-lg rounded-xl flex-1 min-w-[160px]"
-              />
-              <Button
-                variant="outline"
-                onClick={onCustom}
-                disabled={loading}
-                className="h-14 px-6 rounded-xl"
-              >
-                Add
-              </Button>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+                <Input
+                  type="number"
+                  placeholder="Start"
+                  value={inputValue.start}
+                  onChange={(e) =>
+                    onInputChange({ ...inputValue, start: e.target.value })
+                  }
+                  className="h-14 text-lg rounded-xl w-24"
+                />
+                <span className="text-slate-400 font-bold">→</span>
+                <Input
+                  type="number"
+                  placeholder="End"
+                  value={inputValue.end}
+                  onChange={(e) =>
+                    onInputChange({ ...inputValue, end: e.target.value })
+                  }
+                  className="h-14 text-lg rounded-xl w-24"
+                />
+                <Button
+                  variant="outline"
+                  onClick={onRangeAdd}
+                  disabled={loading}
+                  className="h-14 px-6 rounded-xl"
+                >
+                  <Plus className="w-4 h-4 mr-2" /> Add Range
+                </Button>
+              </div>
             </div>
+            <p className="text-xs text-slate-400 mt-2">
+              Enter the same number in both fields to add a single ticket.
+            </p>
           </div>
 
           <div className="space-y-4">
@@ -794,8 +952,9 @@ export default function AdminPage() {
                 numbers={numbersA}
                 inputValue={newNumberA}
                 onInputChange={setNewNumberA}
-                onAuto={() => handleAddNumber("block a")}
-                onCustom={() => handleAddCustomNumber("block a", newNumberA)}
+                onRangeAdd={() =>
+                  handleAddRangeFromInput("block a", newNumberA)
+                }
               />
               <BlockQueueList
                 label="Block B"
@@ -803,8 +962,9 @@ export default function AdminPage() {
                 numbers={numbersB}
                 inputValue={newNumberB}
                 onInputChange={setNewNumberB}
-                onAuto={() => handleAddNumber("block b")}
-                onCustom={() => handleAddCustomNumber("block b", newNumberB)}
+                onRangeAdd={() =>
+                  handleAddRangeFromInput("block b", newNumberB)
+                }
               />
             </div>
 
@@ -820,7 +980,6 @@ export default function AdminPage() {
             </div>
           </>
         ) : (
-          /* Intégration du panel analytics */
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <AnalyticsPanel
               queueNumbers={queueNumbers}
@@ -833,6 +992,48 @@ export default function AdminPage() {
         &copy; {new Date().getFullYear()} - International Organization for
         Migration
       </p>
+
+      {/* Dialogue de conflit */}
+      <AlertDialog
+        open={conflictDialogOpen}
+        onOpenChange={setConflictDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              Conflict Detected
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The following ticket numbers already exist in the other block:
+              <div className="mt-2 p-3 bg-red-50 rounded-lg border border-red-200">
+                <p className="font-mono text-lg font-bold text-red-700">
+                  {conflictNumbers.join(", ")}
+                </p>
+              </div>
+              <p className="mt-2">
+                Would you like to remove them from the other block and add them
+                to this block?
+              </p>
+              <p className="text-sm text-slate-500 mt-1">
+                Range to add: {pendingRange?.start} → {pendingRange?.end} in{" "}
+                {pendingRange?.block?.toUpperCase()}
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelConflict}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleResolveConflict}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Remove & Add
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
