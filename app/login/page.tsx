@@ -29,7 +29,8 @@ export default function LoginPage() {
 
   // Redirect if already logged in
   if (user) {
-    router.push(user.role === "admin" ? "/admin" : "/assistant");
+    const hasAdminAccess = user.role === "admin" || user.role === "dispatching";
+    router.push(hasAdminAccess ? "/admin" : "/assistant");
     return null;
   }
 

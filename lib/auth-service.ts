@@ -37,6 +37,7 @@ export async function createAssistantAccount(
   name: string,
   color: any,
   startNumber?: number,
+  role: "assistant" | "dispatching" = "assistant",
 ): Promise<User> {
   const userCredential = await createUserWithEmailAndPassword(
     auth,
@@ -52,7 +53,7 @@ export async function createAssistantAccount(
   const userData = {
     email,
     name,
-    role: "assistant" as UserRole,
+    role: role as UserRole,
     color,
     block,
     startNumber: startNumber ?? 0,

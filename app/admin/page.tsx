@@ -11,7 +11,7 @@ import {
   formatNumberToCode,
 } from "@/lib/queue-service";
 import { addNewQueueNumber } from "@/lib/queue-hooks";
-import { createAssistantAccount, signOut } from "@/lib/auth-service";
+import { createAssistantAccount, signOut } from "@/lib/auth-service"; // Note: assurez-vous que cette fonction gère le rôle en paramètre si nécessaire, ou adaptez-la
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,11 +83,6 @@ function BlockQueueList({
   assistants: any[];
   onDelete: (id: string) => void;
 }) {
-  const btnBg =
-    color === "indigo"
-      ? "bg-indigo-600 hover:bg-indigo-700"
-      : "bg-cyan-600 hover:bg-cyan-700";
-
   return (
     <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white rounded-[2rem] overflow-hidden">
       <CardContent className="p-8 space-y-6">
@@ -211,6 +206,11 @@ export default function AdminPage() {
     "dashboard",
   );
   const [showAssistantDialog, setShowAssistantDialog] = useState(false);
+
+  // Rôle par défaut mis à "assistant" lors de la création
+  const [newAccountRole, setNewAccountRole] = useState<
+    "assistant" | "dispatching"
+  >("assistant");
   const [newAssistant, setNewAssistant] = useState({
     email: "",
     password: "",
@@ -219,6 +219,9 @@ export default function AdminPage() {
     startNumber: "",
   });
   const { toast } = useToast();
+
+  const isAdmin = user?.role === "admin";
+  const isDispatching = user?.role === "dispatching";
 
   // États pour le dialogue de conflit
   const [conflictDialogOpen, setConflictDialogOpen] = useState(false);
@@ -241,7 +244,10 @@ export default function AdminPage() {
   ];
 
   useEffect(() => {
-    if (!authLoading && (!user || user.role !== "admin")) {
+    if (
+      !authLoading &&
+      (!user || (user.role !== "admin" && user.role !== "dispatching"))
+    ) {
       router.push("/login");
     }
   }, [user, authLoading, router]);
@@ -334,7 +340,6 @@ export default function AdminPage() {
       return;
     }
 
-    // Vérifier les numéros existants dans ce même bloc
     const existingInSameBlock = queueNumbers.filter(
       (n) =>
         n.block === block &&
@@ -350,7 +355,6 @@ export default function AdminPage() {
       });
     }
 
-    // Vérifier les conflits dans l'autre bloc
     const otherBlock = block === "block a" ? "block b" : "block a";
     const conflictingNumbers = queueNumbers
       .filter(
@@ -363,14 +367,12 @@ export default function AdminPage() {
       .map((n) => n.number);
 
     if (conflictingNumbers.length > 0) {
-      // Ouvrir le dialogue de conflit
       setConflictNumbers(conflictingNumbers);
       setPendingRange({ start, end, block });
       setConflictDialogOpen(true);
       return;
     }
 
-    // Pas de conflit : ajouter directement la plage (en ignorant les doublons dans le même bloc)
     await addNumbersToBlock(
       block,
       start,
@@ -379,7 +381,6 @@ export default function AdminPage() {
     );
   }
 
-  // Ajout effectif des numéros (après résolution de conflit ou directement)
   async function addNumbersToBlock(
     block: Block,
     start: number,
@@ -391,7 +392,6 @@ export default function AdminPage() {
       let added = 0;
       for (let num = start; num <= end; num++) {
         if (skipNumbers.includes(num)) continue;
-        // Vérification de sécurité (si un numéro a été ajouté entre temps)
         const alreadyExists = queueNumbers.some(
           (n) => n.number === num && n.status !== "completed",
         );
@@ -421,7 +421,6 @@ export default function AdminPage() {
     }
   }
 
-  // Résoudre le conflit : supprimer les numéros de l'autre bloc et ajouter au bloc cible
   async function handleResolveConflict() {
     if (!pendingRange) return;
     const { start, end, block } = pendingRange;
@@ -429,7 +428,6 @@ export default function AdminPage() {
       setLoading(true);
       setConflictDialogOpen(false);
 
-      // Supprimer les numéros en conflit (dans l'autre bloc)
       const otherBlock = block === "block a" ? "block b" : "block a";
       const toDelete = queueNumbers.filter(
         (n) =>
@@ -442,7 +440,6 @@ export default function AdminPage() {
         await deleteQueueNumber(item.id);
       }
 
-      // Ajouter au bloc cible (en ignorant les éventuels doublons résiduels)
       await addNumbersToBlock(block, start, end, []);
 
       toast({
@@ -466,27 +463,6 @@ export default function AdminPage() {
     setPendingRange(null);
   }
 
-  // Fonctions existantes
-  async function handleAddNumber(block: Block) {
-    try {
-      setLoading(true);
-      const ticket = await addNewQueueNumber(block);
-      toast({
-        title: "Success",
-        description: `Ticket ${formatNumberToCode(ticket.number)} added to ${block.toUpperCase()}`,
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Remplacer l'ancienne handleAddCustomNumber par handleAddRangeFromInput
   function handleAddRangeFromInput(
     block: Block,
     input: { start: string; end: string },
@@ -546,13 +522,16 @@ export default function AdminPage() {
         : newAssistant.block === "block b"
           ? 100
           : 0;
+
       await createAssistantAccount(
         newAssistant.email,
         newAssistant.password,
         newAssistant.name,
         color,
         startNumber,
+        newAccountRole,
       );
+
       setNewAssistant({
         email: "",
         password: "",
@@ -560,8 +539,9 @@ export default function AdminPage() {
         block: "block a",
         startNumber: "",
       });
+      setNewAccountRole("assistant"); // Réinitialisation par défaut
       setShowAssistantDialog(false);
-      toast({ title: "Success", description: "Assistant account created" });
+      toast({ title: "Success", description: "Account created successfully" });
     } catch (error: any) {
       toast({
         title: "Error",
@@ -678,7 +658,10 @@ export default function AdminPage() {
                 Admin Command Center
               </h1>
               <p className="text-slate-500 text-sm">
-                Welcome back, {user.name}
+                Welcome back, {user.name}{" "}
+                <span className="text-xs font-normal opacity-75">
+                  ({user.role})
+                </span>
               </p>
             </div>
           </div>
@@ -728,7 +711,7 @@ export default function AdminPage() {
 
         {activeTab === "dashboard" ? (
           <>
-            {/* Live Status — Block A & Block B side by side */}
+            {/* Live Status */}
             <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white overflow-hidden rounded-3xl">
               <CardHeader className="bg-slate-50/50 border-b border-slate-100">
                 <CardTitle className="text-slate-800 text-lg flex items-center gap-2">
@@ -756,202 +739,241 @@ export default function AdminPage() {
               </CardContent>
             </Card>
 
-            {/* Team Management */}
-            <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white rounded-3xl">
-              <CardHeader className="flex flex-row items-center justify-between border-b border-slate-50 pb-6">
-                <div>
-                  <CardTitle className="text-slate-800">
-                    Team Management
-                  </CardTitle>
-                  <CardDescription>
-                    Manage your clinical assistants per block
-                  </CardDescription>
-                </div>
-                <Dialog
-                  open={showAssistantDialog}
-                  onOpenChange={setShowAssistantDialog}
-                >
-                  <DialogTrigger asChild>
-                    <Button className="bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md">
-                      <UserPlus className="w-4 h-4 mr-2" /> New Assistant
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="rounded-[2rem]">
-                    <DialogHeader>
-                      <DialogTitle>Add Assistant</DialogTitle>
-                      <DialogDescription>
-                        Create a new access account for clinical staff.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 pt-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="name">Full Name</Label>
-                        <Input
-                          id="name"
-                          placeholder="Name"
-                          value={newAssistant.name}
-                          onChange={(e) =>
-                            setNewAssistant({
-                              ...newAssistant,
-                              name: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="email">Email Address</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          placeholder="email@clinic.com"
-                          value={newAssistant.email}
-                          onChange={(e) =>
-                            setNewAssistant({
-                              ...newAssistant,
-                              email: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="password">Security Password</Label>
-                        <Input
-                          id="password"
-                          type="password"
-                          placeholder="Min. 6 chars"
-                          value={newAssistant.password}
-                          onChange={(e) =>
-                            setNewAssistant({
-                              ...newAssistant,
-                              password: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Block Assignment</Label>
-                        <div className="flex gap-2">
-                          {(["block a", "block b"] as Block[]).map((b) => (
-                            <button
-                              key={b}
-                              type="button"
-                              onClick={() =>
-                                setNewAssistant({ ...newAssistant, block: b })
-                              }
-                              className={`flex-1 py-3 rounded-xl text-sm font-bold border transition-all ${
-                                newAssistant.block === b
-                                  ? "bg-indigo-600 text-white border-indigo-600"
-                                  : "bg-white text-slate-500 border-slate-200"
-                              }`}
-                            >
-                              {b.toUpperCase()}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="startNumber">
-                          Starting Number (optional)
-                        </Label>
-                        <Input
-                          id="startNumber"
-                          type="number"
-                          placeholder={
-                            newAssistant.block === "block b"
-                              ? "e.g. 100"
-                              : "e.g. 0"
-                          }
-                          value={newAssistant.startNumber}
-                          onChange={(e) =>
-                            setNewAssistant({
-                              ...newAssistant,
-                              startNumber: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <Button
-                        onClick={handleCreateAssistant}
-                        disabled={loading}
-                        className="w-full bg-indigo-600 rounded-xl py-6 text-lg"
-                      >
-                        {loading ? (
-                          <Loader2 className="animate-spin" />
-                        ) : (
-                          "Verify & Create Account"
-                        )}
+            {/* Team Management — CACHÉ POUR LES DISPATCHERS */}
+            {isAdmin && (
+              <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white rounded-3xl">
+                <CardHeader className="flex flex-row items-center justify-between border-b border-slate-50 pb-6">
+                  <div>
+                    <CardTitle className="text-slate-800">
+                      Team Management
+                    </CardTitle>
+                    <CardDescription>
+                      Manage your accounts per block & system roles
+                    </CardDescription>
+                  </div>
+                  <Dialog
+                    open={showAssistantDialog}
+                    onOpenChange={setShowAssistantDialog}
+                  >
+                    <DialogTrigger asChild>
+                      <Button className="bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md">
+                        <UserPlus className="w-4 h-4 mr-2" /> New Account
                       </Button>
+                    </DialogTrigger>
+                    <DialogContent className="rounded-[2rem]">
+                      <DialogHeader>
+                        <DialogTitle>Add New Account</DialogTitle>
+                        <DialogDescription>
+                          Create an access account for staff members.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 pt-4">
+                        <div className="space-y-2">
+                          <Label>Account Role</Label>
+                          <div className="flex gap-2">
+                            {(["assistant", "dispatching"] as const).map(
+                              (r) => (
+                                <button
+                                  key={r}
+                                  type="button"
+                                  onClick={() => setNewAccountRole(r)}
+                                  className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all uppercase ${
+                                    newAccountRole === r
+                                      ? "bg-indigo-900 text-white border-indigo-900"
+                                      : "bg-white text-slate-500 border-slate-200"
+                                  }`}
+                                >
+                                  {r}
+                                </button>
+                              ),
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="name">Full Name</Label>
+                          <Input
+                            id="name"
+                            placeholder="Name"
+                            value={newAssistant.name}
+                            onChange={(e) =>
+                              setNewAssistant({
+                                ...newAssistant,
+                                name: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="email">Email Address</Label>
+                          <Input
+                            id="email"
+                            type="email"
+                            placeholder="email@clinic.com"
+                            value={newAssistant.email}
+                            onChange={(e) =>
+                              setNewAssistant({
+                                ...newAssistant,
+                                email: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="password">Security Password</Label>
+                          <Input
+                            id="password"
+                            type="password"
+                            placeholder="Min. 6 chars"
+                            value={newAssistant.password}
+                            onChange={(e) =>
+                              setNewAssistant({
+                                ...newAssistant,
+                                password: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        {newAccountRole === "assistant" && (
+                          <>
+                            <div className="space-y-2">
+                              <Label>Block Assignment</Label>
+                              <div className="flex gap-2">
+                                {(["block a", "block b"] as Block[]).map(
+                                  (b) => (
+                                    <button
+                                      key={b}
+                                      type="button"
+                                      onClick={() =>
+                                        setNewAssistant({
+                                          ...newAssistant,
+                                          block: b,
+                                        })
+                                      }
+                                      className={`flex-1 py-3 rounded-xl text-sm font-bold border transition-all ${
+                                        newAssistant.block === b
+                                          ? "bg-indigo-600 text-white border-indigo-600"
+                                          : "bg-white text-slate-500 border-slate-200"
+                                      }`}
+                                    >
+                                      {b.toUpperCase()}
+                                    </button>
+                                  ),
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="startNumber">
+                                Starting Number (optional)
+                              </Label>
+                              <Input
+                                id="startNumber"
+                                type="number"
+                                placeholder={
+                                  newAssistant.block === "block b"
+                                    ? "e.g. 100"
+                                    : "e.g. 0"
+                                }
+                                value={newAssistant.startNumber}
+                                onChange={(e) =>
+                                  setNewAssistant({
+                                    ...newAssistant,
+                                    startNumber: e.target.value,
+                                  })
+                                }
+                              />
+                            </div>
+                          </>
+                        )}
+                        <Button
+                          onClick={handleCreateAssistant}
+                          disabled={loading}
+                          className="w-full bg-indigo-600 rounded-xl py-6 text-lg"
+                        >
+                          {loading ? (
+                            <Loader2 className="animate-spin" />
+                          ) : (
+                            "Verify & Create Account"
+                          )}
+                        </Button>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </CardHeader>
+                <CardContent className="pt-6">
+                  <div className="grid md:grid-cols-2 gap-8">
+                    <div>
+                      <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-3 px-1">
+                        Block A Team
+                      </h4>
+                      <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
+                        {assistantsA.map((assistant) => (
+                          <AssistantRow
+                            key={assistant.id}
+                            assistant={assistant}
+                            onDelete={() => handleDelete(assistant.id)}
+                          />
+                        ))}
+                        {assistantsA.length === 0 && (
+                          <p className="text-sm text-slate-400 px-1">
+                            No assistants assigned yet
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </DialogContent>
-                </Dialog>
-              </CardHeader>
-              <CardContent className="pt-6">
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div>
-                    <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-3 px-1">
-                      Block A Team
-                    </h4>
-                    <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
-                      {assistantsA.map((assistant) => (
-                        <AssistantRow
-                          key={assistant.id}
-                          assistant={assistant}
-                          onDelete={() => handleDelete(assistant.id)}
-                        />
-                      ))}
-                      {assistantsA.length === 0 && (
-                        <p className="text-sm text-slate-400 px-1">
-                          No assistants assigned yet
-                        </p>
-                      )}
+                    <div>
+                      <h4 className="text-xs font-bold text-cyan-600 uppercase tracking-widest mb-3 px-1">
+                        Block B Team
+                      </h4>
+                      <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
+                        {assistantsB.map((assistant) => (
+                          <AssistantRow
+                            key={assistant.id}
+                            assistant={assistant}
+                            onDelete={() => handleDelete(assistant.id)}
+                          />
+                        ))}
+                        {assistantsB.length === 0 && (
+                          <p className="text-sm text-slate-400 px-1">
+                            No assistants assigned yet
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-cyan-600 uppercase tracking-widest mb-3 px-1">
-                      Block B Team
-                    </h4>
-                    <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
-                      {assistantsB.map((assistant) => (
-                        <AssistantRow
-                          key={assistant.id}
-                          assistant={assistant}
-                          onDelete={() => handleDelete(assistant.id)}
-                        />
-                      ))}
-                      {assistantsB.length === 0 && (
-                        <p className="text-sm text-slate-400 px-1">
-                          No assistants assigned yet
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Ticket Format Documentation */}
-            <div className="p-5 rounded-2xl bg-indigo-50 border border-indigo-100">
+            <div className="mb-6 p-5 rounded-2xl bg-indigo-50 border border-indigo-100">
               <h3 className="text-sm font-bold text-indigo-900 uppercase tracking-wider mb-3">
                 Ticket Numbering System
               </h3>
               <div className="space-y-2 text-sm text-slate-700">
                 <p>
-                  <span className="font-bold text-indigo-700">Block A</span> :
-                  Tickets <span className="font-semibold">A00 - A99</span>{" "}
-                  (numbers 0–99)
+                  <span className="font-bold text-indigo-700">A</span> : Tickets
+                  from <span className="font-semibold">0 - 99</span>
                 </p>
                 <p>
-                  <span className="font-bold text-cyan-700">Block B</span> :
-                  Tickets <span className="font-semibold">B00 - B99</span>{" "}
-                  (numbers 100–199)
+                  <span className="font-bold text-indigo-700">B</span> : Tickets
+                  from <span className="font-semibold">100 - 199</span>
                 </p>
-                <div className="pt-2 text-xs text-slate-500 border-t border-indigo-100">
-                  Each block manages its own independent queue and counter.
-                </div>
+                <p>
+                  <span className="font-bold text-indigo-700">C</span> : Tickets
+                  from <span className="font-semibold">200 - 299</span>
+                </p>
+                <p>
+                  <span className="font-bold text-indigo-700">D</span> : Tickets
+                  from <span className="font-semibold">300 - 399</span>
+                </p>
+                <p>
+                  <span className="font-bold text-indigo-700">E</span> : Tickets
+                  from <span className="font-semibold">400 - 499</span>
+                </p>
               </div>
             </div>
 
-            {/* Queue Operations — Block A & Block B */}
+            {/* Queue Operations */}
             <div className="grid lg:grid-cols-2 gap-6">
               <BlockQueueList
                 label="Bloc A"
@@ -981,16 +1003,19 @@ export default function AdminPage() {
               />
             </div>
 
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                onClick={handleReset}
-                disabled={loading}
-                className="h-12 px-8 bg-red-600 hover:bg-red-700 text-white rounded-xl"
-              >
-                <RotateCcw className="w-4 h-4 mr-2" /> Reset Entire Queue
-              </Button>
-            </div>
+            {/* Reset global caché pour dispatching */}
+            {isAdmin && (
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  onClick={handleReset}
+                  disabled={loading}
+                  className="h-12 px-8 bg-red-600 hover:bg-red-700 text-white rounded-xl"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" /> Reset Entire Queue
+                </Button>
+              </div>
+            )}
           </>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
