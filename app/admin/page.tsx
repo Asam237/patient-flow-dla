@@ -62,6 +62,142 @@ import {
 
 type Block = "block a" | "block b";
 
+function BlockQueueList({
+  label,
+  color,
+  numbers,
+  inputValue,
+  onInputChange,
+  onRangeAdd,
+  loading,
+  assistants,
+  onDelete,
+}: {
+  label: string;
+  color: "indigo" | "cyan";
+  numbers: QueueNumber[];
+  inputValue: { start: string; end: string };
+  onInputChange: (v: { start: string; end: string }) => void;
+  onRangeAdd: () => void;
+  loading: boolean;
+  assistants: any[];
+  onDelete: (id: string) => void;
+}) {
+  const btnBg =
+    color === "indigo"
+      ? "bg-indigo-600 hover:bg-indigo-700"
+      : "bg-cyan-600 hover:bg-cyan-700";
+
+  return (
+    <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white rounded-[2rem] overflow-hidden">
+      <CardContent className="p-8 space-y-6">
+        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
+          <Label className="text-slate-600 font-semibold mb-3 block">
+            {label} — Issue Tickets (Range)
+          </Label>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+              <Input
+                type="text"
+                placeholder="Start"
+                value={inputValue.start}
+                onChange={(e) =>
+                  onInputChange({ ...inputValue, start: e.target.value })
+                }
+                className="h-14 text-lg rounded-xl w-24"
+              />
+              <span className="text-slate-400 font-bold">→</span>
+              <Input
+                type="number"
+                placeholder="End"
+                value={inputValue.end}
+                onChange={(e) =>
+                  onInputChange({ ...inputValue, end: e.target.value })
+                }
+                className="h-14 text-lg rounded-xl w-24"
+              />
+              <Button
+                variant="outline"
+                onClick={onRangeAdd}
+                disabled={loading}
+                className="h-14 px-6 rounded-xl"
+              >
+                <Plus className="w-4 h-4 mr-2" /> Add Range
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            Enter the same number in both fields to add a single ticket.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="font-bold text-slate-800 flex items-center gap-2 px-1">
+            {label} — Active Numbers
+            <Badge variant="outline" className="ml-2 bg-slate-50">
+              {numbers.length}
+            </Badge>
+          </h3>
+          <div className="grid sm:grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-2">
+            {numbers.map((num) => {
+              const numAssistant = assistants.find(
+                (a) => a.id === num.assistantId,
+              );
+              return (
+                <div
+                  key={num.id}
+                  className="group flex flex-col p-4 bg-white border border-slate-100 rounded-2xl hover:shadow-md transition-all"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-2xl font-black text-slate-900 tracking-tighter">
+                      {formatNumberToCode(num.number)}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onDelete(num.id)}
+                      className="h-8 w-8 text-slate-200 hover:text-red-500"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <Badge
+                    className={`w-fit text-[10px] uppercase font-bold py-0.5 rounded-md border-none mb-3 ${
+                      num.status === "current"
+                        ? "bg-green-500"
+                        : num.status === "waiting"
+                          ? "bg-amber-500"
+                          : "bg-slate-300"
+                    }`}
+                  >
+                    {num.status === "current"
+                      ? "Serving"
+                      : num.status === "waiting"
+                        ? "Waiting"
+                        : "Completed"}
+                  </Badge>
+                  {numAssistant && (
+                    <div className="flex items-center gap-2 mt-auto pt-2 border-t border-slate-50">
+                      <Circle
+                        className="w-2 h-2"
+                        fill={numAssistant.color}
+                        color={numAssistant.color}
+                      />
+                      <span className="text-[11px] font-medium text-slate-500 truncate italic">
+                        {numAssistant.name}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -528,135 +664,6 @@ export default function AdminPage() {
     );
   }
 
-  function BlockQueueList({
-    label,
-    color,
-    numbers,
-    inputValue,
-    onInputChange,
-    onRangeAdd,
-  }: {
-    label: string;
-    color: "indigo" | "cyan";
-    numbers: QueueNumber[];
-    inputValue: { start: string; end: string };
-    onInputChange: (v: { start: string; end: string }) => void;
-    onRangeAdd: () => void;
-  }) {
-    const btnBg =
-      color === "indigo"
-        ? "bg-indigo-600 hover:bg-indigo-700"
-        : "bg-cyan-600 hover:bg-cyan-700";
-    return (
-      <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white rounded-[2rem] overflow-hidden">
-        <CardContent className="p-8 space-y-6">
-          <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-            <Label className="text-slate-600 font-semibold mb-3 block">
-              {label} — Issue Tickets (Range)
-            </Label>
-            <div className="flex flex-wrap gap-3 items-end">
-              <div className="flex items-center gap-2 flex-1 min-w-[200px]">
-                <Input
-                  type="number"
-                  placeholder="Start"
-                  value={inputValue.start}
-                  onChange={(e) =>
-                    onInputChange({ ...inputValue, start: e.target.value })
-                  }
-                  className="h-14 text-lg rounded-xl w-24"
-                />
-                <span className="text-slate-400 font-bold">→</span>
-                <Input
-                  type="number"
-                  placeholder="End"
-                  value={inputValue.end}
-                  onChange={(e) =>
-                    onInputChange({ ...inputValue, end: e.target.value })
-                  }
-                  className="h-14 text-lg rounded-xl w-24"
-                />
-                <Button
-                  variant="outline"
-                  onClick={onRangeAdd}
-                  disabled={loading}
-                  className="h-14 px-6 rounded-xl"
-                >
-                  <Plus className="w-4 h-4 mr-2" /> Add Range
-                </Button>
-              </div>
-            </div>
-            <p className="text-xs text-slate-400 mt-2">
-              Enter the same number in both fields to add a single ticket.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="font-bold text-slate-800 flex items-center gap-2 px-1">
-              {label} — Active Numbers
-              <Badge variant="outline" className="ml-2 bg-slate-50">
-                {numbers.length}
-              </Badge>
-            </h3>
-            <div className="grid sm:grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-2">
-              {numbers.map((num) => {
-                const numAssistant = assistants.find(
-                  (a) => a.id === num.assistantId,
-                );
-                return (
-                  <div
-                    key={num.id}
-                    className="group flex flex-col p-4 bg-white border border-slate-100 rounded-2xl hover:shadow-md transition-all"
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-2xl font-black text-slate-900 tracking-tighter">
-                        {formatNumberToCode(num.number)}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDelete(num.id)}
-                        className="h-8 w-8 text-slate-200 hover:text-red-500"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <Badge
-                      className={`w-fit text-[10px] uppercase font-bold py-0.5 rounded-md border-none mb-3 ${
-                        num.status === "current"
-                          ? "bg-green-500"
-                          : num.status === "waiting"
-                            ? "bg-amber-500"
-                            : "bg-slate-300"
-                      }`}
-                    >
-                      {num.status === "current"
-                        ? "Serving"
-                        : num.status === "waiting"
-                          ? "Waiting"
-                          : "Completed"}
-                    </Badge>
-                    {numAssistant && (
-                      <div className="flex items-center gap-2 mt-auto pt-2 border-t border-slate-50">
-                        <Circle
-                          className="w-2 h-2"
-                          fill={numAssistant.color}
-                          color={numAssistant.color}
-                        />
-                        <span className="text-[11px] font-medium text-slate-500 truncate italic">
-                          {numAssistant.name}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-[#f8fafc] p-4 md:p-10">
       <div className="max-w-6xl mx-auto space-y-8">
@@ -947,7 +954,7 @@ export default function AdminPage() {
             {/* Queue Operations — Block A & Block B */}
             <div className="grid lg:grid-cols-2 gap-6">
               <BlockQueueList
-                label="Block A"
+                label="Bloc A"
                 color="indigo"
                 numbers={numbersA}
                 inputValue={newNumberA}
@@ -955,9 +962,12 @@ export default function AdminPage() {
                 onRangeAdd={() =>
                   handleAddRangeFromInput("block a", newNumberA)
                 }
+                loading={loading}
+                assistants={assistants}
+                onDelete={handleDelete}
               />
               <BlockQueueList
-                label="Block B"
+                label="Bloc B"
                 color="cyan"
                 numbers={numbersB}
                 inputValue={newNumberB}
@@ -965,6 +975,9 @@ export default function AdminPage() {
                 onRangeAdd={() =>
                   handleAddRangeFromInput("block b", newNumberB)
                 }
+                loading={loading}
+                assistants={assistants}
+                onDelete={handleDelete}
               />
             </div>
 
@@ -1012,11 +1025,10 @@ export default function AdminPage() {
                 </p>
               </div>
               <p className="mt-2">
-                Would you like to remove them from the other block and add them
-                to this block?
+                Would you like to remove them from the other block ?
               </p>
               <p className="text-sm text-slate-500 mt-1">
-                Range to add: {pendingRange?.start} → {pendingRange?.end} in{" "}
+                Range : {pendingRange?.start} → {pendingRange?.end} in{" "}
                 {pendingRange?.block?.toUpperCase()}
               </p>
             </AlertDialogDescription>
@@ -1029,7 +1041,7 @@ export default function AdminPage() {
               onClick={handleResolveConflict}
               className="bg-red-600 hover:bg-red-700"
             >
-              Remove & Add
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
