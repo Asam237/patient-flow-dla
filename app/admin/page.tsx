@@ -424,32 +424,48 @@ export default function AdminPage() {
   async function handleResolveConflict() {
     if (!pendingRange) return;
     const { start, end, block } = pendingRange;
+    const otherBlock = block === "block a" ? "block b" : "block a";
+
     try {
       setLoading(true);
       setConflictDialogOpen(false);
 
-      const otherBlock = block === "block a" ? "block b" : "block a";
-      const toDelete = queueNumbers.filter(
+      const conflictingItems = queueNumbers.filter(
         (n) =>
           n.block === otherBlock &&
           n.number >= start &&
           n.number <= end &&
           n.status !== "completed",
       );
-      for (const item of toDelete) {
+
+      for (const item of conflictingItems) {
         await deleteQueueNumber(item.id);
       }
 
-      await addNumbersToBlock(block, start, end, []);
+      const remainingNumbers = queueNumbers.filter(
+        (n) => !conflictingItems.some((c) => c.id === n.id),
+      );
+
+      let added = 0;
+      for (let num = start; num <= end; num++) {
+        const alreadyExists = remainingNumbers.some(
+          (n) =>
+            n.number === num && n.block === block && n.status !== "completed",
+        );
+        if (!alreadyExists) {
+          await addNumberToQueue(num, block);
+          added++;
+        }
+      }
 
       toast({
-        title: "Conflict resolved",
-        description: `Tickets moved from ${otherBlock.toUpperCase()} to ${block.toUpperCase()}.`,
+        title: "Conflict Resolved",
+        description: `${added} ticket${added > 1 ? "s" : ""} déplacé${added > 1 ? "s" : ""} moved to ${block.toUpperCase()}.`,
       });
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Could not resolve conflict.",
+        title: "Erreur",
+        description: error.message || "Unable to resolve the conflict.",
         variant: "destructive",
       });
     } finally {
