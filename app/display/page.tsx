@@ -176,12 +176,12 @@ export default function DisplayPage() {
     const blockEn = blockLabel ? `, ${blockLabel}` : "";
 
     const frText = guichetNumber
-      ? `Numéro ${formatted}${blockFr}, veuillez vous rendre au box numéro ${guichetNumber}`
-      : `Numéro ${formatted}${blockFr}, veuillez vous rendre au box ${assistantName || ""}`;
+      ? `Numéro ${formatted}, veuillez vous rendre au box numéro ${guichetNumber}${blockFr}`
+      : `Numéro ${formatted}, veuillez vous rendre au box ${assistantName || ""}${blockFr}`;
 
     const enText = guichetNumber
-      ? `Ticket number ${formatted}${blockEn}, please proceed to box number ${guichetNumber}`
-      : `Ticket number ${formatted}${blockEn}, please proceed to box ${assistantName || ""}`;
+      ? `Ticket number ${formatted}, please proceed to box number ${guichetNumber}${blockEn}`
+      : `Ticket number ${formatted}, please proceed to box ${assistantName || ""}${blockEn}`;
 
     const getPreferredFrVoice = (): SpeechSynthesisVoice | null => {
       const voices = window.speechSynthesis.getVoices();
@@ -264,10 +264,8 @@ export default function DisplayPage() {
 
     // Français x2
     await speakWithPromise(frText, "fr-FR", preferredFrVoice);
-    await speakWithPromise(frText, "fr-FR", preferredFrVoice);
 
     // Anglais x2
-    await speakWithPromise(enText, "en-US", enVoiceRef.current);
     await speakWithPromise(enText, "en-US", enVoiceRef.current);
   };
 
@@ -552,13 +550,13 @@ export default function DisplayPage() {
             <div className="p-10 flex flex-col h-full">
               {/* Label block */}
               <div className="flex items-center justify-between mb-2">
-                <span className="text-blue-600 uppercase tracking-widest font-black text-lg">
+                <span className="text-blue-600 uppercase tracking-widest font-black text-3xl drop-shadow-sm">
                   Block A
                 </span>
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-100">
                   <Users className="w-4 h-4 text-blue-400" />
                   <span className="text-sm font-bold text-blue-600">
-                    {waitingA} en attente
+                    {waitingA} en attente / pending
                   </span>
                 </div>
               </div>
@@ -634,13 +632,13 @@ export default function DisplayPage() {
             <div className="absolute top-0 left-0 w-full h-4 bg-gradient-to-r from-purple-600 to-pink-600" />
             <div className="p-10 flex flex-col h-full">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-purple-600 uppercase tracking-widest font-black text-lg">
+                <span className="text-purple-600 uppercase tracking-widest font-black text-3xl drop-shadow-sm">
                   Block B
                 </span>
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 rounded-full border border-purple-100">
                   <Users className="w-4 h-4 text-purple-400" />
                   <span className="text-sm font-bold text-purple-600">
-                    {waitingB} en attente
+                    {waitingB} en attente / pending
                   </span>
                 </div>
               </div>
