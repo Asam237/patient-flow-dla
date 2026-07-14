@@ -223,6 +223,42 @@ export default function DisplayPage() {
 
     const preferredFrVoice = getPreferredFrVoice();
 
+    const getPreferredEnVoice = (): SpeechSynthesisVoice | null => {
+      const voices = window.speechSynthesis.getVoices();
+
+      const preferredNames = [
+        "google french",
+        "thomas",
+        "amelie",
+        "marie",
+        "juliette",
+      ];
+
+      for (const preferred of preferredNames) {
+        const match = voices.find(
+          (v) =>
+            v.name.toLowerCase().includes(preferred) && v.lang.startsWith("en"),
+        );
+        if (match) return match;
+      }
+
+      const enUS = voices.find((v) => v.lang === "en-US");
+      if (enUS) return enUS;
+
+      const anyEn = voices.find((v) => v.lang.startsWith("en"));
+      if (anyEn) return anyEn;
+
+      if (!enVoiceRef.current) {
+        console.warn(
+          "[TTS] Aucune voix anglaise disponible sur cet appareil — l'annonce anglaise sera lue avec la voix par défaut (souvent française).",
+        );
+      }
+
+      return enVoiceRef.current;
+    };
+
+    const preferredEnVoice = getPreferredEnVoice();
+
     const speakWithPromise = (
       text: string,
       lang: string,
@@ -266,7 +302,7 @@ export default function DisplayPage() {
     await speakWithPromise(frText, "fr-FR", preferredFrVoice);
 
     // Anglais x2
-    await speakWithPromise(enText, "en-US", enVoiceRef.current);
+    await speakWithPromise(enText, "en-US", preferredEnVoice);
   };
 
   useEffect(() => {
