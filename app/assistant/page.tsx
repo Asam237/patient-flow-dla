@@ -128,13 +128,14 @@ export default function AssistantPage() {
 
   const myBlock = (user?.block || "block a").toLowerCase();
   const isBlockA = myBlock === "block a";
-  const blockKey = isBlockA ? "A" : "B";
   const blockNumbers = queueNumbers.filter(
     (n) => (n.block || "block a").toLowerCase() === myBlock,
   );
-  const waitingCount = blockNumbers.filter(
-    (n) => n.status === "waiting",
-  ).length;
+
+  // Nombre de tickets en attente pour le bloc concerné
+  const waitingNumbers = blockNumbers.filter((n) => n.status === "waiting");
+  const waitingCount = waitingNumbers.length;
+
   const blockCurrentNumber = isBlockA
     ? currentState?.currentNumberA
     : currentState?.currentNumberB;
@@ -188,6 +189,17 @@ export default function AssistantPage() {
 
   async function handleCallNext() {
     if (!user) return;
+
+    // VÉRIFICATION : Si aucun ticket en attente dans le bloc concerné
+    if (waitingCount === 0) {
+      toast({
+        title: "Aucun ticket en attente",
+        description: `Il n'y a plus de tickets en attente pour le ${myBlock.toUpperCase()}.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setLoading(true);
       await markPreviousCompleted();
@@ -398,17 +410,22 @@ export default function AssistantPage() {
                     </div>
                   </div>
 
+                  {/* BOUTON BLOQUÉ S'IL N'Y A PAS DE TICKET EN ATTENTE */}
                   <Button
                     onClick={handleCallNext}
-                    disabled={loading}
-                    className="w-full h-20 text-xl font-bold rounded-2xl bg-blue-600 hover:bg-blue-700 shadow-lg shadow-blue-200 transition-all active:scale-[0.98]"
+                    disabled={loading || waitingCount === 0}
+                    className="w-full h-20 text-xl font-bold rounded-2xl bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed shadow-lg shadow-blue-200 transition-all active:scale-[0.98]"
                   >
                     {loading ? (
                       <Loader2 className="w-6 h-6 animate-spin mr-3" />
                     ) : (
                       <Bell className="w-6 h-6 mr-3" />
                     )}
-                    {loading ? "Calling..." : "Call Next Client"}
+                    {loading
+                      ? "Calling..."
+                      : waitingCount === 0
+                        ? "No Tickets Waiting"
+                        : "Call Next Client"}
                   </Button>
                 </CardContent>
               </Card>

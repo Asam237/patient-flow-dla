@@ -121,7 +121,7 @@ export default function DisplayPage() {
           source.buffer = audioBufferRef.current!;
           source.connect(ctx.destination);
           source.start(0);
-          setTimeout(() => resolve(), 200);
+          setTimeout(() => resolve(), 800);
         };
         if (ctx.state === "suspended") {
           ctx
@@ -137,7 +137,7 @@ export default function DisplayPage() {
         const audio = htmlAudioRef.current;
         audio.currentTime = 0;
         audio.play().catch(() => {});
-        setTimeout(() => resolve(), 200);
+        setTimeout(() => resolve(), 800);
         return;
       }
       resolve();

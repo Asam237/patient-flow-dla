@@ -175,7 +175,44 @@ export async function callNextNumber(
   const blockKey =
     blockNorm === "block a" ? "A" : blockNorm === "block b" ? "B" : null;
 
-  // 1. Clôturer le ticket "current" actif de ce bloc précis
+  // 1. Récupérer l'historique du bloc cible
+  const allNumbersSnapshot = await getDocs(
+    collection(db, QUEUE_NUMBERS_COLLECTION),
+  );
+  const allBlockNumbers = allNumbersSnapshot.docs
+    .map((d) => ({
+      id: d.id,
+      number: Number(d.data().number),
+      block: ((d.data().block as string) || "").toLowerCase(),
+      status: d.data().status as string,
+    }))
+    .filter((n) => (blockNorm ? n.block === blockNorm : true));
+
+  let nextInQueueDocId: string | null = null;
+
+  // 2. Identifier le ticket à appeler
+  if (ticketId) {
+    const ticketRef = doc(db, QUEUE_NUMBERS_COLLECTION, ticketId);
+    const ticketSnap = await getDoc(ticketRef);
+    if (ticketSnap.exists() && ticketSnap.data().status === "waiting") {
+      nextInQueueDocId = ticketSnap.id;
+    }
+  } else {
+    const waitingTickets = allBlockNumbers
+      .filter((n) => n.status === "waiting")
+      .sort((a, b) => a.number - b.number);
+
+    if (waitingTickets.length > 0) {
+      nextInQueueDocId = waitingTickets[0].id;
+    }
+  }
+
+  // 🛑 RÈGLE D'ARRÊT : Si aucun ticket en attente n'est trouvé, ON ARRÊTE TOUT.
+  if (!nextInQueueDocId) {
+    throw new Error("Plus de tickets en attente dans ce bloc.");
+  }
+
+  // 3. Clôturer UNIQUEMENT les tickets "current" précédents du bloc
   const qCurrent = query(
     collection(db, QUEUE_NUMBERS_COLLECTION),
     where("status", "==", "current"),
@@ -197,161 +234,47 @@ export async function callNextNumber(
     await Promise.all(completionPromises);
   }
 
-  // 2. Récupérer l'historique du bloc cible pour calculer l'incrément réel
-  const allNumbersSnapshot = await getDocs(
-    collection(db, QUEUE_NUMBERS_COLLECTION),
+  // 4. Passer le ticket sélectionné au statut "current"
+  await updateDoc(doc(db, QUEUE_NUMBERS_COLLECTION, nextInQueueDocId), {
+    status: "current",
+    assistantId: assistantId || null,
+    assistantName: assistantName || null,
+    calledAt: Timestamp.now(),
+  });
+
+  const updatedTargetSnap = await getDoc(
+    doc(db, QUEUE_NUMBERS_COLLECTION, nextInQueueDocId),
   );
-  const allBlockNumbers = allNumbersSnapshot.docs
-    .map((d) => ({
-      id: d.id,
-      number: Number(d.data().number),
-      block: ((d.data().block as string) || "").toLowerCase(),
-      status: d.data().status as string,
-    }))
-    .filter((n) => (blockNorm ? n.block === blockNorm : true));
+  const targetData = updatedTargetSnap.data()!;
 
-  let nextInQueue: QueueNumber | null = null;
+  const nextInQueue: QueueNumber = {
+    id: updatedTargetSnap.id,
+    number: targetData.number,
+    status: "current",
+    assistantId: targetData.assistantId || null,
+    assistantName: targetData.assistantName || null,
+    createdAt: timestampToDate(targetData.createdAt),
+    calledAt: timestampToDate(targetData.calledAt),
+    completedAt: null,
+  };
 
-  if (ticketId) {
-    const ticketRef = doc(db, QUEUE_NUMBERS_COLLECTION, ticketId);
-    const ticketSnap = await getDoc(ticketRef);
-    if (ticketSnap.exists() && ticketSnap.data().status === "waiting") {
-      const data = ticketSnap.data();
-      nextInQueue = {
-        id: ticketSnap.id,
-        number: data.number,
-        status: data.status,
-        assistantId: data.assistantId || null,
-        assistantName: data.assistantName || null,
-        createdAt: timestampToDate(data.createdAt),
-        calledAt: data.calledAt ? timestampToDate(data.calledAt) : null,
-        completedAt: data.completedAt
-          ? timestampToDate(data.completedAt)
-          : null,
-      };
-    }
-  } else {
-    const waitingTickets = allBlockNumbers
-      .filter((n) => n.status === "waiting")
-      .sort((a, b) => a.number - b.number);
+  // 5. Calculer le VRAI prochain ticket en attente (s'il y en a un)
+  const remainingWaitingTickets = allBlockNumbers
+    .filter((n) => n.status === "waiting" && n.id !== nextInQueueDocId)
+    .sort((a, b) => a.number - b.number);
 
-    if (waitingTickets.length > 0) {
-      const target = waitingTickets[0];
-      const docRef = doc(db, QUEUE_NUMBERS_COLLECTION, target.id);
-      const docSnap = await getDoc(docRef);
-      const data = docSnap.data()!;
-      nextInQueue = {
-        id: docSnap.id,
-        number: data.number,
-        status: data.status,
-        assistantId: data.assistantId,
-        assistantName: data.assistantName,
-        createdAt: timestampToDate(data.createdAt),
-        calledAt: data.calledAt ? timestampToDate(data.calledAt) : null,
-        completedAt: data.completedAt
-          ? timestampToDate(data.completedAt)
-          : null,
-      };
-    }
-  }
+  const nextWaitingNumberValue =
+    remainingWaitingTickets.length > 0
+      ? remainingWaitingTickets[0].number
+      : null; // `null` signifie qu'il n'y a plus de ticket suivant
 
-  // 🔄 INCÉMENTATION SÉCURISÉE SI LA FILE EST VIDE
-  if (!nextInQueue) {
-    let nextGeneratedNumber = 0;
-
-    const validNumbers = allBlockNumbers
-      .map((n) => n.number)
-      .filter((n) => !isNaN(n));
-    if (validNumbers.length > 0) {
-      nextGeneratedNumber = Math.max(...validNumbers) + 1; // S'implémente continuellement (+1)
-    } else if (assistantId) {
-      const userSnap = await getDoc(doc(db, "users", assistantId));
-      if (userSnap.exists()) {
-        nextGeneratedNumber = Number(userSnap.data().startNumber) || 0;
-      }
-    }
-
-    const newDocRef = await addDoc(collection(db, QUEUE_NUMBERS_COLLECTION), {
-      number: nextGeneratedNumber,
-      block: blockNorm,
-      status: "current",
-      assistantId: assistantId || null,
-      assistantName: assistantName || null,
-      createdAt: Timestamp.now(),
-      calledAt: Timestamp.now(),
-      completedAt: null,
-    });
-
-    const newDocSnap = await getDoc(newDocRef);
-    const newData = newDocSnap.data()!;
-
-    nextInQueue = {
-      id: newDocSnap.id,
-      number: newData.number,
-      status: "current",
-      assistantId: newData.assistantId,
-      assistantName: newData.assistantName,
-      createdAt: timestampToDate(newData.createdAt),
-      calledAt: timestampToDate(newData.calledAt),
-      completedAt: null,
-    };
-  } else {
-    await updateDoc(doc(db, QUEUE_NUMBERS_COLLECTION, nextInQueue.id), {
-      status: "current",
-      assistantId: assistantId || null,
-      assistantName: assistantName || null,
-      calledAt: Timestamp.now(),
-    });
-    nextInQueue.status = "current";
-    nextInQueue.assistantId = assistantId || null;
-    nextInQueue.assistantName = assistantName || null;
-    nextInQueue.calledAt = new Date();
-  }
-
-  // 4. Déterminer le prochain ticket virtuel "En attente"
-  const updatedNumbersSnapshot = await getDocs(
-    collection(db, QUEUE_NUMBERS_COLLECTION),
-  );
-  const updatedBlockNumbers = updatedNumbersSnapshot.docs
-    .map((d) => ({
-      number: Number(d.data().number),
-      block: ((d.data().block as string) || "").toLowerCase(),
-      status: d.data().status as string,
-    }))
-    .filter((n) => (blockNorm ? n.block === blockNorm : true));
-
-  const realNextWaiting =
-    updatedBlockNumbers
-      .filter((n) => n.status === "waiting")
-      .sort((a, b) => a.number - b.number)[0] ?? null;
-
-  let nextWaitingNumberValue = realNextWaiting
-    ? realNextWaiting.number
-    : nextInQueue.number + 1;
-
-  // 🔁 La file ne doit jamais rester vide : si plus aucun ticket n'est en
-  // attente pour ce bloc après cet appel, on émet immédiatement le suivant.
-  if (!realNextWaiting) {
-    await addDoc(collection(db, QUEUE_NUMBERS_COLLECTION), {
-      number: nextWaitingNumberValue,
-      block: blockNorm,
-      status: "waiting",
-      assistantId: null,
-      assistantName: null,
-      createdAt: Timestamp.now(),
-      calledAt: null,
-      completedAt: null,
-    });
-  }
-
-  // 5. Mise à jour globale et par bloc de queue_state
+  // 6. Mise à jour de queue_state dans Firestore
   const stateRef = doc(db, QUEUE_STATE_COLLECTION, "current");
   const updatePayload: Record<string, any> = {
     updatedAt: Timestamp.now(),
     currentNumber: nextInQueue.number,
     nextNumber: nextWaitingNumberValue,
     currentAssistantId: assistantId || null,
-    // FIX: Add global calledAt timestamp for single-queue pages like l_page.tsx
     calledAt: Timestamp.now(),
   };
 
@@ -359,9 +282,6 @@ export async function callNextNumber(
     updatePayload[`currentNumber${blockKey}`] = nextInQueue.number;
     updatePayload[`nextNumber${blockKey}`] = nextWaitingNumberValue;
     updatePayload[`currentAssistantId${blockKey}`] = assistantId || null;
-    // ⏱️ Horodatage dédié à CET appel précis (même si le numéro est identique
-    // à l'appel précédent, ex: rappel manuel) afin que l'affichage puisse
-    // détecter et ré-annoncer chaque appel, pas seulement les changements de numéro.
     updatePayload[`calledAt${blockKey}`] = Timestamp.now();
   }
 
