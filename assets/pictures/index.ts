@@ -5,7 +5,7 @@ import tsen from "./ts-en.webp";
 import tsfr from "./ts-fr.webp";
 import plan from "./plan.png";
 import plan1 from "./plan_1.jpg";
-import qrcode from "./qrcode.png";
+import qrcode from "./qrcode.webp";
 
 export const images = {
   iomlogo,

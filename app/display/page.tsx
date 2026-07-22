@@ -34,10 +34,11 @@ export default function DisplayPage() {
   const frVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
   const enVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
-  const carouselImages = [images.plan, images.plan1, images.qrcode];
+  // const carouselImages = [images.plan, images.plan1, images.qrcode];
+  const carouselImages = [images.qrcode];
   const carouselData = [
-    { title: "Poste d'enregistrement / Registration Box" },
-    { title: "Poste d'enregistrement / Registration Box" },
+    // { title: "Poste d'enregistrement / Registration Box" },
+    // { title: "Poste d'enregistrement / Registration Box" },
     {
       title:
         "Scannez le code QR pour donner votre avis / Scan the QR Code to Share Your Feedback",
@@ -546,7 +547,7 @@ export default function DisplayPage() {
                 https://
               </span>
               <span className="text-2xl font-mono font-black text-white tracking-wider">
-                shorturl.at/zqDGJ
+                shorturl.at/dzc4I
               </span>
             </div>
           </div>
