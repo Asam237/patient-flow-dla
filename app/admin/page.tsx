@@ -58,6 +58,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
+  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
 type Block = "block a" | "block b";
@@ -147,14 +148,40 @@ function BlockQueueList({
                     <span className="text-2xl font-black text-slate-900 tracking-tighter">
                       {formatNumberToCode(num.number)}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => onDelete(num.id)}
-                      className="h-8 w-8 text-slate-200 hover:text-red-500"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+
+                    {/* Popup de confirmation de suppression */}
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-200 hover:text-red-500"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Confirm Deletion</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Are you sure you want to delete the ticket{" "}
+                            <strong className="text-slate-900">
+                              {formatNumberToCode(num.number)}
+                            </strong>{" "}
+                            ?
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => onDelete(num.id)}
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                          >
+                            Delete
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                   <Badge
                     className={`w-fit text-[10px] uppercase font-bold py-0.5 rounded-md border-none mb-3 ${
