@@ -1020,18 +1020,16 @@ export default function AdminPage() {
             </div>
 
             {/* Reset global caché pour dispatching */}
-            {isAdmin && (
-              <div className="flex justify-end">
-                <Button
-                  variant="outline"
-                  onClick={handleReset}
-                  disabled={loading}
-                  className="h-12 px-8 bg-red-600 hover:bg-red-700 text-white rounded-xl"
-                >
-                  <RotateCcw className="w-4 h-4 mr-2" /> Reset Entire Queue
-                </Button>
-              </div>
-            )}
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                onClick={handleReset}
+                disabled={loading}
+                className="h-12 px-8 bg-red-600 hover:bg-red-700 text-white rounded-xl"
+              >
+                <RotateCcw className="w-4 h-4 mr-2" /> Reset Entire Queue
+              </Button>
+            </div>
           </>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
