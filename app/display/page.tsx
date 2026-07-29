@@ -301,17 +301,15 @@ export default function DisplayPage() {
         if (!docSnap.exists()) return;
         const data = docSnap.data();
 
+        // =========================
+        // DÉTECTION BLOCK A
+        // =========================
         const newNumberA = data.currentNumberA ?? null;
         const calledAtAMillis: number | null =
           data.calledAtA?.toMillis?.() ?? null;
-        const isNewCallA =
-          newNumberA !== null &&
-          calledAtAMillis !== null &&
-          previousCalledAtARef.current !== null &&
-          calledAtAMillis !== previousCalledAtARef.current;
 
         if (previousCalledAtARef.current === null) {
-          // Premier chargement après refresh : on stocke juste le timestamp sans lancer d'annonce
+          // Premier chargement : initialisation sans vocal
           previousCalledAtARef.current = calledAtAMillis;
           previousNumberARef.current = newNumberA;
         } else if (
@@ -319,7 +317,7 @@ export default function DisplayPage() {
           calledAtAMillis !== null &&
           calledAtAMillis !== previousCalledAtARef.current
         ) {
-          // C'est un VRAI nouvel appel survenu APRÈS le chargement !
+          // Nouvel appel détecté
           previousCalledAtARef.current = calledAtAMillis;
           previousNumberARef.current = newNumberA;
 
@@ -327,27 +325,8 @@ export default function DisplayPage() {
           const assistantName =
             assistantsRef.current.find((a) => a.id === assistantId)?.name ||
             "Guichet";
-          processQueue();
-          setIsNewNumberA(true);
-          setTimeout(() => setIsNewNumberA(false), 6000);
-        }
 
-        if (isNewCallA) {
-          const assistantId = data.currentAssistantIdA;
-          const assistant = assistantsRef.current.find(
-            (a) => a.id === assistantId,
-          );
-          const queueAnnounceFn = (name?: string) => {
-            announcementQueueRef.current.push({
-              ticketNumber: newNumberA,
-              assistantName: name,
-              blockLabel: "Block A",
-            });
-            processQueue();
-          };
-          const assistantName =
-            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
-            "Guichet";
+          // UN SEUL PUSH DANS LA FILE D'ATTENTE
           announcementQueueRef.current.push({
             ticketNumber: newNumberA,
             assistantName,
@@ -358,23 +337,16 @@ export default function DisplayPage() {
           setIsNewNumberA(true);
           setTimeout(() => setIsNewNumberA(false), 6000);
         }
-        previousNumberARef.current = newNumberA;
-        if (calledAtAMillis !== null) {
-          previousCalledAtARef.current = calledAtAMillis;
-        }
 
-        // Détection changement Block B — même logique basée sur calledAtB.
+        // =========================
+        // DÉTECTION BLOCK B
+        // =========================
         const newNumberB = data.currentNumberB ?? null;
         const calledAtBMillis: number | null =
           data.calledAtB?.toMillis?.() ?? null;
-        const isNewCallB =
-          newNumberB !== null &&
-          calledAtBMillis !== null &&
-          previousCalledAtBRef.current !== null &&
-          calledAtBMillis !== previousCalledAtBRef.current;
 
         if (previousCalledAtBRef.current === null) {
-          // Premier chargement après refresh
+          // Premier chargement : initialisation sans vocal
           previousCalledAtBRef.current = calledAtBMillis;
           previousNumberBRef.current = newNumberB;
         } else if (
@@ -382,6 +354,7 @@ export default function DisplayPage() {
           calledAtBMillis !== null &&
           calledAtBMillis !== previousCalledAtBRef.current
         ) {
+          // Nouvel appel détecté
           previousCalledAtBRef.current = calledAtBMillis;
           previousNumberBRef.current = newNumberB;
 
@@ -389,28 +362,8 @@ export default function DisplayPage() {
           const assistantName =
             assistantsRef.current.find((a) => a.id === assistantId)?.name ||
             "Guichet";
-          processQueue();
-          setIsNewNumberB(true);
-          setTimeout(() => setIsNewNumberB(false), 6000);
-        }
 
-        if (isNewCallB) {
-          const assistantId = data.currentAssistantIdB;
-          const assistant = assistantsRef.current.find(
-            (a) => a.id === assistantId,
-          );
-          const queueAnnounceFn = (name?: string) => {
-            announcementQueueRef.current.push({
-              ticketNumber: newNumberB,
-              assistantName: name,
-              blockLabel: "Block B",
-            });
-            processQueue();
-          };
-          const assistantName =
-            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
-            "Guichet";
-
+          // UN SEUL PUSH DANS LA FILE D'ATTENTE
           announcementQueueRef.current.push({
             ticketNumber: newNumberB,
             assistantName,
@@ -420,10 +373,6 @@ export default function DisplayPage() {
           processQueue();
           setIsNewNumberB(true);
           setTimeout(() => setIsNewNumberB(false), 6000);
-        }
-        previousNumberBRef.current = newNumberB;
-        if (calledAtBMillis !== null) {
-          previousCalledAtBRef.current = calledAtBMillis;
         }
 
         setQueueState(data);
