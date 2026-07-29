@@ -35,14 +35,14 @@ export default function DisplayPage() {
   const enVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   // const carouselImages = [images.plan, images.plan1, images.qrcode];
-  const carouselImages = [images.qrcode];
+  const carouselImages = [images.qrcode, images.plan1];
   const carouselData = [
-    // { title: "Poste d'enregistrement / Registration Box" },
     // { title: "Poste d'enregistrement / Registration Box" },
     {
       title:
         "Scannez le code QR pour donner votre avis / Scan the QR Code to Share Your Feedback",
     },
+    { title: "Poste d'enregistrement / Registration Box" },
   ];
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
@@ -86,21 +86,9 @@ export default function DisplayPage() {
         htmlAudioRef.current.volume = 1;
       }
       if (typeof window !== "undefined" && window.speechSynthesis) {
-        const cacheVoices = () => {
-          const voices = window.speechSynthesis.getVoices();
-          if (voices.length > 0) {
-            frVoiceRef.current =
-              voices.find((v) => v.lang.toLowerCase().includes("fr")) || null;
-            enVoiceRef.current =
-              voices.find((v) => v.lang.toLowerCase().includes("en")) || null;
-          }
-        };
-        cacheVoices();
-        if (window.speechSynthesis.onvoiceschanged !== undefined) {
-          window.speechSynthesis.onvoiceschanged = cacheVoices;
-        }
+        window.speechSynthesis.getVoices();
         const warmup = new SpeechSynthesisUtterance(" ");
-        warmup.volume = 0;
+        warmup.volume = 0.01;
         window.speechSynthesis.speak(warmup);
       }
     } catch (e) {
@@ -319,7 +307,31 @@ export default function DisplayPage() {
         const isNewCallA =
           newNumberA !== null &&
           calledAtAMillis !== null &&
+          previousCalledAtARef.current !== null &&
           calledAtAMillis !== previousCalledAtARef.current;
+
+        if (previousCalledAtARef.current === null) {
+          // Premier chargement après refresh : on stocke juste le timestamp sans lancer d'annonce
+          previousCalledAtARef.current = calledAtAMillis;
+          previousNumberARef.current = newNumberA;
+        } else if (
+          newNumberA !== null &&
+          calledAtAMillis !== null &&
+          calledAtAMillis !== previousCalledAtARef.current
+        ) {
+          // C'est un VRAI nouvel appel survenu APRÈS le chargement !
+          previousCalledAtARef.current = calledAtAMillis;
+          previousNumberARef.current = newNumberA;
+
+          const assistantId = data.currentAssistantIdA;
+          const assistantName =
+            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
+            "Guichet";
+          processQueue();
+          setIsNewNumberA(true);
+          setTimeout(() => setIsNewNumberA(false), 6000);
+        }
+
         if (isNewCallA) {
           const assistantId = data.currentAssistantIdA;
           const assistant = assistantsRef.current.find(
@@ -358,7 +370,30 @@ export default function DisplayPage() {
         const isNewCallB =
           newNumberB !== null &&
           calledAtBMillis !== null &&
+          previousCalledAtBRef.current !== null &&
           calledAtBMillis !== previousCalledAtBRef.current;
+
+        if (previousCalledAtBRef.current === null) {
+          // Premier chargement après refresh
+          previousCalledAtBRef.current = calledAtBMillis;
+          previousNumberBRef.current = newNumberB;
+        } else if (
+          newNumberB !== null &&
+          calledAtBMillis !== null &&
+          calledAtBMillis !== previousCalledAtBRef.current
+        ) {
+          previousCalledAtBRef.current = calledAtBMillis;
+          previousNumberBRef.current = newNumberB;
+
+          const assistantId = data.currentAssistantIdB;
+          const assistantName =
+            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
+            "Guichet";
+          processQueue();
+          setIsNewNumberB(true);
+          setTimeout(() => setIsNewNumberB(false), 6000);
+        }
+
         if (isNewCallB) {
           const assistantId = data.currentAssistantIdB;
           const assistant = assistantsRef.current.find(

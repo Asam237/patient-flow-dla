@@ -4,7 +4,7 @@ import regfr from "./reg-fr.webp";
 import tsen from "./ts-en.webp";
 import tsfr from "./ts-fr.webp";
 import plan from "./plan.png";
-import plan1 from "./plan_1.jpg";
+import plan1 from "./plan_1.webp";
 import qrcode from "./qrcode.webp";
 
 export const images = {
