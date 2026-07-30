@@ -24,6 +24,8 @@ export default function DisplayPage() {
   const previousNumberBRef = useRef<number | null>(null);
   const previousCalledAtARef = useRef<number | null>(null);
   const previousCalledAtBRef = useRef<number | null>(null);
+  const hasInitializedARef = useRef<boolean>(false);
+  const hasInitializedBRef = useRef<boolean>(false);
   const assistantsRef = useRef<User[]>([]);
 
   const htmlAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -308,8 +310,9 @@ export default function DisplayPage() {
         const calledAtAMillis: number | null =
           data.calledAtA?.toMillis?.() ?? null;
 
-        if (previousCalledAtARef.current === null) {
+        if (!hasInitializedARef.current) {
           // Premier chargement : initialisation sans vocal
+          hasInitializedARef.current = true;
           previousCalledAtARef.current = calledAtAMillis;
           previousNumberARef.current = newNumberA;
         } else if (
@@ -345,8 +348,9 @@ export default function DisplayPage() {
         const calledAtBMillis: number | null =
           data.calledAtB?.toMillis?.() ?? null;
 
-        if (previousCalledAtBRef.current === null) {
+        if (!hasInitializedBRef.current) {
           // Premier chargement : initialisation sans vocal
+          hasInitializedBRef.current = true;
           previousCalledAtBRef.current = calledAtBMillis;
           previousNumberBRef.current = newNumberB;
         } else if (
