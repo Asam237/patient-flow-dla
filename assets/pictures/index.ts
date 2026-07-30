@@ -5,6 +5,7 @@ import tsen from "./ts-en.webp";
 import tsfr from "./ts-fr.webp";
 import plan from "./plan.png";
 import plan1 from "./plan_1.webp";
+import plan2 from "./plan_2.webp";
 import qrcode from "./qrcode.webp";
 
 export const images = {
@@ -16,6 +17,7 @@ export const images = {
   plan,
   qrcode,
   plan1,
+  plan2,
 };
 
 export default images;

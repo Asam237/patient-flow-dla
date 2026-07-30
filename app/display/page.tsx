@@ -37,14 +37,15 @@ export default function DisplayPage() {
   const enVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   // const carouselImages = [images.plan, images.plan1, images.qrcode];
-  const carouselImages = [images.qrcode, images.plan1];
+  const carouselImages = [images.qrcode, images.plan1, images.plan2];
   const carouselData = [
     // { title: "Poste d'enregistrement / Registration Box" },
     {
       title:
         "Scannez le code QR pour donner votre avis / Scan the QR Code to Share Your Feedback",
     },
-    { title: "Poste d'enregistrement / Registration Box" },
+    { title: "Poste d'enregistrement Block A / Registration Box Block A" },
+    { title: "Poste d'enregistrement Block B / Registration Box Block B" },
   ];
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
