@@ -3,9 +3,10 @@
 import { useState, useEffect, useRef } from "react";
 import { doc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useUsers } from "@/lib/queue-hooks";
 import { Card, CardContent } from "@/components/ui/card";
 import { Clock, Volume2, Users } from "lucide-react";
-import type { QueueState, User, QueueNumber } from "@/lib/types";
+import type { User, QueueNumber } from "@/lib/types";
 import images from "@/assets/pictures";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
@@ -13,7 +14,7 @@ import { formatTicket } from "@/lib/utils";
 
 export default function DisplayPage() {
   const [queueState, setQueueState] = useState<any>(null);
-  const [assistants, setAssistants] = useState<User[]>([]);
+  const assistants = useUsers().filter((u) => u.role === "assistant");
   const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
   const [isNewNumberA, setIsNewNumberA] = useState(false);
   const [isNewNumberB, setIsNewNumberB] = useState(false);
@@ -27,6 +28,9 @@ export default function DisplayPage() {
   const hasInitializedARef = useRef<boolean>(false);
   const hasInitializedBRef = useRef<boolean>(false);
   const assistantsRef = useRef<User[]>([]);
+  useEffect(() => {
+    assistantsRef.current = assistants;
+  }, [assistants]);
 
   const htmlAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -203,6 +207,7 @@ export default function DisplayPage() {
           !v.name.toLowerCase().includes("canada") &&
           !v.name.toLowerCase().includes("québec"),
       );
+      if (frFR) return frFR;
 
       const anyFrFR = voices.find((v) => v.lang === "fr-FR");
       if (anyFrFR) return anyFrFR;
@@ -384,17 +389,6 @@ export default function DisplayPage() {
       },
     );
 
-    const unsubscribeAssistants = onSnapshot(
-      collection(db, "users"),
-      (snapshot) => {
-        const list = snapshot.docs
-          .map((doc) => ({ id: doc.id, ...doc.data() }) as User)
-          .filter((u) => u.role === "assistant");
-        assistantsRef.current = list;
-        setAssistants(list);
-      },
-    );
-
     const unsubscribeNumbers = onSnapshot(
       collection(db, "queue_numbers"),
       (snapshot) => {
@@ -421,7 +415,6 @@ export default function DisplayPage() {
 
     return () => {
       unsubscribeState();
-      unsubscribeAssistants();
       unsubscribeNumbers();
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});

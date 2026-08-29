@@ -1,6 +1,6 @@
 # Système de Gestion de File d'Attente
 
-Application complète de gestion de file d'attente pour services médicaux construite avec Next.js, Tailwind CSS et Supabase.
+Application de gestion de file d'attente pour services médicaux construite avec Next.js, Tailwind CSS et Firebase.
 
 ## Fonctionnalités
 
@@ -29,22 +29,23 @@ Application complète de gestion de file d'attente pour services médicaux const
 
 ## Architecture
 
-### Base de données (Supabase)
+### Base de données (Firebase)
 
-#### Tables
-- **profiles**: Profils utilisateurs avec rôles (patient, assistant, admin)
+#### Collections Firestore
+- **users**: Profils utilisateurs avec rôles (admin, assistant)
 - **queue_numbers**: Numéros de file d'attente avec statuts et historique
+- **queue_state**: État courant de la file (numéro en cours, numéro suivant)
 
 #### Sécurité
-- Row Level Security (RLS) activé sur toutes les tables
-- Policies spécifiques par rôle
-- Accès public limité aux données en cours uniquement
+- Authentification via Firebase Auth (email/mot de passe)
+- Règles de sécurité Firestore par rôle
+- Accès public en lecture seule pour l'affichage
 
 ### Technologies utilisées
 - **Next.js 13**: Framework React avec App Router
 - **TypeScript**: Typage statique
 - **Tailwind CSS**: Styling moderne et responsive
-- **Supabase**: Backend-as-a-Service (authentification, database, real-time)
+- **Firebase**: Authentification et base de données temps réel (Firestore)
 - **shadcn/ui**: Composants UI réutilisables
 - **Lucide React**: Icônes
 
@@ -56,37 +57,22 @@ Application complète de gestion de file d'attente pour services médicaux const
 npm install
 ```
 
-### 2. Configuration Supabase
+### 2. Configuration Firebase
 
 Créez un fichier `.env.local` à la racine du projet :
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=votre_url_supabase
-NEXT_PUBLIC_SUPABASE_ANON_KEY=votre_clé_anonyme_supabase
+NEXT_PUBLIC_FIREBASE_API_KEY=votre_api_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=votre_projet.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=votre_projet_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=votre_projet.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=votre_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=votre_app_id
 ```
 
-### 3. Configuration de la base de données
+Voir [FIREBASE_SETUP.md](./FIREBASE_SETUP.md) pour la procédure complète de création du projet Firebase, des règles de sécurité Firestore et du premier compte admin.
 
-La migration a déjà été appliquée. Elle crée :
-- Les tables `profiles` et `queue_numbers`
-- Les politiques RLS
-- Les fonctions nécessaires
-- Les triggers pour la création automatique de profils
-
-### 4. Créer le premier compte admin
-
-Utilisez le Dashboard Supabase ou SQL Editor :
-
-```sql
--- Créer un utilisateur admin via l'interface Supabase Auth
--- Puis mettre à jour son rôle dans la table profiles
-
-UPDATE profiles
-SET role = 'admin', full_name = 'Super Admin'
-WHERE email = 'votre-email@exemple.com';
-```
-
-### 5. Lancer l'application
+### 3. Lancer l'application
 
 ```bash
 npm run dev
@@ -98,11 +84,10 @@ L'application sera disponible sur `http://localhost:3000`
 
 ### Accès aux différentes interfaces
 
-- **Écran public**: `/` - Accessible sans authentification
-- **Login assistant**: `/assistant/login`
-- **Dashboard assistant**: `/assistant/dashboard` - Nécessite authentification (rôle: assistant ou admin)
-- **Login admin**: `/admin/login`
-- **Dashboard admin**: `/admin/dashboard` - Nécessite authentification (rôle: admin)
+- **Écran public**: `/display` - Accessible sans authentification
+- **Login**: `/login` - Point d'entrée unique, redirige selon le rôle
+- **Dashboard assistant**: `/assistant` - Nécessite authentification (rôle: assistant)
+- **Dashboard admin**: `/admin` - Nécessite authentification (rôle: admin)
 
 ### Workflow typique
 
@@ -114,35 +99,35 @@ L'application sera disponible sur `http://localhost:3000`
 
 ## Fonctionnalités temps réel
 
-L'application utilise Supabase Realtime pour :
+L'application utilise les listeners temps réel de Firestore (`onSnapshot`) pour :
 - Mettre à jour automatiquement l'affichage public quand un numéro est appelé
 - Synchroniser les dashboards assistants et admin
 - Afficher instantanément les nouveaux numéros ajoutés
 
 ## Sécurité
 
-- Authentification par email/mot de passe via Supabase Auth
-- Row Level Security (RLS) sur toutes les tables
-- Policies restrictives basées sur les rôles
-- Accès public limité aux données en cours uniquement
-- Sessions sécurisées avec tokens JWT
+- Authentification par email/mot de passe via Firebase Auth
+- Règles de sécurité Firestore basées sur les rôles
+- Accès public limité à la lecture de l'état de la file
+- Sessions sécurisées gérées par Firebase Auth
 
 ## Structure du projet
 
 ```
 /app
-  /page.tsx                    # Écran public
+  /page.tsx                    # Redirection racine
   /layout.tsx                  # Layout principal avec AuthProvider
-  /assistant
-    /login/page.tsx            # Login assistant
-    /dashboard/page.tsx        # Dashboard assistant
-  /admin
-    /login/page.tsx            # Login admin
-    /dashboard/page.tsx        # Dashboard admin
+  /login/page.tsx              # Login unique (admin + assistant)
+  /assistant/page.tsx          # Dashboard assistant
+  /admin/page.tsx              # Dashboard admin
+  /display/page.tsx            # Écran public
 /lib
-  /supabase.ts                 # Configuration Supabase client
+  /firebase.ts                 # Configuration du client Firebase
   /auth-context.tsx            # Context d'authentification
-  /queue-hooks.ts              # Hooks pour gérer la file d'attente
+  /auth-service.ts             # Fonctions d'authentification et gestion des comptes
+  /queue-service.ts            # Accès Firestore pour la file d'attente
+  /queue-hooks.ts              # Hooks React pour la file d'attente
+  /types.ts                    # Types partagés
 /components/ui                 # Composants UI réutilisables
 ```
 
@@ -158,23 +143,15 @@ npm run lint         # Linter le code
 npm run typecheck    # Vérifier les types TypeScript
 ```
 
-### Variables d'environnement
-
-```env
-NEXT_PUBLIC_SUPABASE_URL=      # URL de votre projet Supabase
-NEXT_PUBLIC_SUPABASE_ANON_KEY= # Clé anonyme publique Supabase
-```
-
 ## Notes importantes
 
-1. Les numéros sont réinitialisés automatiquement chaque jour (basé sur la date de création)
-2. Un assistant ne peut traiter qu'un seul numéro à la fois
-3. Les statistiques sont calculées en temps réel
-4. L'accès public est en lecture seule sur les numéros en cours/en attente uniquement
+1. Un assistant ne peut traiter qu'un seul numéro à la fois
+2. Les statistiques sont calculées en temps réel
+3. L'accès public est en lecture seule
 
 ## Support
 
 Pour toute question ou problème, consultez la documentation de :
 - [Next.js](https://nextjs.org/docs)
-- [Supabase](https://supabase.com/docs)
+- [Firebase](https://firebase.google.com/docs)
 - [Tailwind CSS](https://tailwindcss.com/docs)

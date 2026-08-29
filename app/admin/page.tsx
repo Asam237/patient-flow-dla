@@ -2,16 +2,18 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { collection, doc, onSnapshot } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import {
   addNumberToQueue,
   deleteQueueNumber,
   resetQueue,
   formatNumberToCode,
 } from "@/lib/queue-service";
-import { addNewQueueNumber } from "@/lib/queue-hooks";
-import { createAssistantAccount, signOut } from "@/lib/auth-service"; // Note: assurez-vous que cette fonction gère le rôle en paramètre si nécessaire, ou adaptez-la
+import { useQueueNumbers, useQueueState, useUsers } from "@/lib/queue-hooks";
+import {
+  createAssistantAccount,
+  deleteAssistant,
+  signOut,
+} from "@/lib/auth-service";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +40,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { QueueNumber, QueueState, User } from "@/lib/types";
+import type { QueueNumber, User } from "@/lib/types";
 import {
   Dialog,
   DialogContent,
@@ -225,10 +227,11 @@ export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
   const [newNumberA, setNewNumberA] = useState({ start: "", end: "" });
   const [newNumberB, setNewNumberB] = useState({ start: "", end: "" });
-  const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
-  const [currentState, setCurrentState] = useState<QueueState | null>(null);
+  const queueNumbers = useQueueNumbers();
+  const currentState = useQueueState();
+  const users = useUsers();
+  const assistants = users.filter((u) => u.role === "assistant");
   const [loading, setLoading] = useState(false);
-  const [assistants, setAssistants] = useState<User[]>([]);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">(
     "dashboard",
   );
@@ -278,83 +281,6 @@ export default function AdminPage() {
       router.push("/login");
     }
   }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const unsubscribeNumbers = onSnapshot(
-      collection(db, "queue_numbers"),
-      (snapshot) => {
-        const numbers: QueueNumber[] = snapshot.docs
-          .map((doc) => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              number: data.number,
-              block: (data.block as string) || "block a",
-              status: data.status,
-              assistantId: data.assistantId || null,
-              assistantName: data.assistantName || null,
-              createdAt: data.createdAt?.toDate() || new Date(),
-              calledAt: data.calledAt?.toDate() || null,
-              completedAt: data.completedAt?.toDate() || null,
-              serviceDurationSeconds: data.serviceDurationSeconds || null,
-            } as QueueNumber;
-          })
-          .sort((a, b) => a.number - b.number);
-        setQueueNumbers(numbers);
-      },
-    );
-
-    const unsubscribeState = onSnapshot(
-      doc(db, "queue_state", "current"),
-      (doc) => {
-        if (doc.exists()) {
-          const data = doc.data();
-          setCurrentState({
-            id: doc.id,
-            currentNumber: data.currentNumber ?? null,
-            nextNumber: data.nextNumber ?? null,
-            currentAssistantId: data.currentAssistantId || null,
-            currentNumberA: data.currentNumberA ?? null,
-            nextNumberA: data.nextNumberA ?? null,
-            currentAssistantIdA: data.currentAssistantIdA || null,
-            currentNumberB: data.currentNumberB ?? null,
-            nextNumberB: data.nextNumberB ?? null,
-            currentAssistantIdB: data.currentAssistantIdB || null,
-            updatedAt: data.updatedAt?.toDate() || new Date(),
-          } as QueueState);
-        }
-      },
-    );
-
-    const unsubscribeUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-      const assistantsList: User[] = snapshot.docs
-        .map((doc) => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            email: data.email,
-            name: data.name,
-            role: data.role,
-            block:
-              data.block || (data.startNumber >= 100 ? "block b" : "block a"),
-            startNumber: data.startNumber ?? 0,
-            color: data.color,
-            isActive: data.isActive,
-            createdAt: data.createdAt?.toDate() || new Date(),
-          } as User;
-        })
-        .filter((u) => u.role === "assistant");
-      setAssistants(assistantsList);
-    });
-
-    return () => {
-      unsubscribeNumbers();
-      unsubscribeState();
-      unsubscribeUsers();
-    };
-  }, [user]);
 
   // Ajouter une plage pour un bloc donné avec gestion des conflits
   async function handleAddRange(block: Block, start: number, end: number) {
@@ -527,6 +453,19 @@ export default function AdminPage() {
     try {
       await deleteQueueNumber(id);
       toast({ title: "Deleted", description: "Number removed" });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: "Deletion failed",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleDeleteAssistant(id: string) {
+    try {
+      await deleteAssistant(id);
+      toast({ title: "Deleted", description: "Account removed" });
     } catch (error: any) {
       toast({
         title: "Error",
@@ -953,7 +892,7 @@ export default function AdminPage() {
                           <AssistantRow
                             key={assistant.id}
                             assistant={assistant}
-                            onDelete={() => handleDelete(assistant.id)}
+                            onDelete={() => handleDeleteAssistant(assistant.id)}
                           />
                         ))}
                         {assistantsA.length === 0 && (
@@ -972,7 +911,7 @@ export default function AdminPage() {
                           <AssistantRow
                             key={assistant.id}
                             assistant={assistant}
-                            onDelete={() => handleDelete(assistant.id)}
+                            onDelete={() => handleDeleteAssistant(assistant.id)}
                           />
                         ))}
                         {assistantsB.length === 0 && (

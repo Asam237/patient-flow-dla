@@ -1,82 +1,92 @@
-import { useState, useEffect } from "react";
-import {
-  getAllQueueNumbers,
-  callNextNumber as callNextNumberService,
-  addNumberToQueue,
-  completeCurrentNumber,
-} from "./queue-service";
-import type { QueueNumber } from "./types";
+import { useEffect, useState } from "react";
+import { collection, doc, onSnapshot } from "firebase/firestore";
+import { db } from "./firebase";
+import type { QueueNumber, QueueState, User } from "./types";
 
+function mapQueueNumber(id: string, data: any): QueueNumber {
+  return {
+    id,
+    number: data.number,
+    block: (data.block as string) || "block a",
+    status: data.status,
+    assistantId: data.assistantId || null,
+    assistantName: data.assistantName || null,
+    createdAt: data.createdAt?.toDate() || new Date(),
+    calledAt: data.calledAt?.toDate() || null,
+    completedAt: data.completedAt?.toDate() || null,
+    serviceDurationSeconds: data.serviceDurationSeconds || null,
+  };
+}
+
+function mapQueueState(id: string, data: any): QueueState {
+  return {
+    id,
+    currentNumber: data.currentNumber ?? null,
+    nextNumber: data.nextNumber ?? null,
+    currentAssistantId: data.currentAssistantId || null,
+    currentNumberA: data.currentNumberA ?? null,
+    nextNumberA: data.nextNumberA ?? null,
+    currentAssistantIdA: data.currentAssistantIdA || null,
+    currentNumberB: data.currentNumberB ?? null,
+    nextNumberB: data.nextNumberB ?? null,
+    currentAssistantIdB: data.currentAssistantIdB || null,
+    updatedAt: data.updatedAt?.toDate() || new Date(),
+  };
+}
+
+function mapUser(id: string, data: any): User {
+  return {
+    id,
+    email: data.email,
+    name: data.name,
+    role: data.role,
+    block: data.block || (data.startNumber >= 100 ? "block b" : "block a"),
+    startNumber: data.startNumber ?? 0,
+    color: data.color,
+    isActive: data.isActive,
+    createdAt: data.createdAt?.toDate() || new Date(),
+  };
+}
+
+/** Liste temps réel des numéros de la file, triée par numéro. */
 export function useQueueNumbers() {
   const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const fetchQueueNumbers = async () => {
-    try {
-      const numbers = await getAllQueueNumbers();
-      setQueueNumbers(numbers);
-    } catch (error) {
-      console.error("Error fetching queue numbers:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   useEffect(() => {
-    fetchQueueNumbers();
-    const interval = setInterval(fetchQueueNumbers, 2000);
-    return () => clearInterval(interval);
+    return onSnapshot(collection(db, "queue_numbers"), (snapshot) => {
+      const numbers = snapshot.docs
+        .map((docSnap) => mapQueueNumber(docSnap.id, docSnap.data()))
+        .sort((a, b) => a.number - b.number);
+      setQueueNumbers(numbers);
+    });
   }, []);
 
-  return {
-    queueNumbers,
-    loading,
-    refetch: fetchQueueNumbers,
-  };
+  return queueNumbers;
 }
 
-export async function callNextNumber(
-  assistantId: string,
-  assistantName?: string,
-  ticketId?: string,
-  block?: string,
-) {
-  try {
-    const result = await callNextNumberService(
-      assistantId,
-      assistantName,
-      ticketId,
-      block,
-    );
-    return { data: result, error: null };
-  } catch (error: any) {
-    return { data: null, error: { message: error.message } };
-  }
+/** État courant de la file (numéro en cours / suivant, par bloc) en temps réel. */
+export function useQueueState() {
+  const [queueState, setQueueState] = useState<QueueState | null>(null);
+
+  useEffect(() => {
+    return onSnapshot(doc(db, "queue_state", "current"), (docSnap) => {
+      if (!docSnap.exists()) return;
+      setQueueState(mapQueueState(docSnap.id, docSnap.data()));
+    });
+  }, []);
+
+  return queueState;
 }
 
-export async function completeNumber(block?: string) {
-  try {
-    await completeCurrentNumber(block);
-    return { error: null };
-  } catch (error: any) {
-    return { error: { message: error.message } };
-  }
-}
+/** Liste temps réel de tous les utilisateurs (non filtrée par rôle). */
+export function useUsers() {
+  const [users, setUsers] = useState<User[]>([]);
 
-export async function addNewQueueNumber(
-  block?: "block a" | "block b",
-): Promise<QueueNumber> {
-  const allNumbers = await getAllQueueNumbers();
-  const blockNumbers = allNumbers.filter(
-    (n) => n.block?.toLowerCase() === block?.toLowerCase(),
-  );
+  useEffect(() => {
+    return onSnapshot(collection(db, "users"), (snapshot) => {
+      setUsers(snapshot.docs.map((docSnap) => mapUser(docSnap.id, docSnap.data())));
+    });
+  }, []);
 
-  // Initialisation à -1 pour que le premier numéro généré soit 0 (ex: A00)
-  const maxIndex =
-    blockNumbers.length > 0
-      ? Math.max(...blockNumbers.map((n) => n.number))
-      : -1;
-
-  const nextNumber = maxIndex + 1;
-  return await addNumberToQueue(nextNumber, block);
+  return users;
 }

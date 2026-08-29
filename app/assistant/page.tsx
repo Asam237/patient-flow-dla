@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { collection, doc, onSnapshot } from "firebase/firestore";
+import { doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { callNextNumber, formatNumberToCode } from "@/lib/queue-service";
+import { useQueueNumbers, useQueueState, useUsers } from "@/lib/queue-hooks";
 import { signOut } from "@/lib/auth-service";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
@@ -27,18 +28,17 @@ import {
   PhoneCall,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { QueueNumber, QueueState, User } from "@/lib/types";
 import { motion, AnimatePresence } from "framer-motion";
 import { AnalyticsPanel } from "@/components/analytics-panel";
 
 export default function AssistantPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
-  const [currentState, setCurrentState] = useState<QueueState | null>(null);
+  const queueNumbers = useQueueNumbers();
+  const currentState = useQueueState();
+  const assistants = useUsers();
   const [loading, setLoading] = useState(false);
   const [callingId, setCallingId] = useState<string | null>(null);
-  const [assistants, setAssistants] = useState<User[]>([]);
   const { toast } = useToast();
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">(
@@ -50,81 +50,6 @@ export default function AssistantPage() {
       router.push("/login");
     }
   }, [user, authLoading, router]);
-
-  useEffect(() => {
-    if (!user) return;
-
-    const unsubscribeNumbers = onSnapshot(
-      collection(db, "queue_numbers"),
-      (snapshot) => {
-        const numbers: QueueNumber[] = snapshot.docs
-          .map((doc) => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              number: data.number,
-              block: (data.block as string) || "block a",
-              status: data.status,
-              assistantId: data.assistantId || null,
-              assistantName: data.assistantName || null,
-              createdAt: data.createdAt?.toDate() || new Date(),
-              calledAt: data.calledAt?.toDate() || null,
-              completedAt: data.completedAt?.toDate() || null,
-              serviceDurationSeconds: data.serviceDurationSeconds || null,
-            } as QueueNumber;
-          })
-          .sort((a, b) => a.number - b.number);
-        setQueueNumbers(numbers);
-      },
-    );
-
-    const unsubscribeState = onSnapshot(
-      doc(db, "queue_state", "current"),
-      (doc) => {
-        if (doc.exists()) {
-          const data = doc.data();
-          setCurrentState({
-            id: doc.id,
-            currentNumber: data.currentNumber ?? null,
-            nextNumber: data.nextNumber ?? null,
-            currentAssistantId: data.currentAssistantId || null,
-            currentNumberA: data.currentNumberA ?? null,
-            nextNumberA: data.nextNumberA ?? null,
-            currentAssistantIdA: data.currentAssistantIdA || null,
-            currentNumberB: data.currentNumberB ?? null,
-            nextNumberB: data.nextNumberB ?? null,
-            currentAssistantIdB: data.currentAssistantIdB || null,
-            updatedAt: data.updatedAt?.toDate() || new Date(),
-          } as QueueState);
-        }
-      },
-    );
-
-    const unsubscribeUsers = onSnapshot(collection(db, "users"), (snapshot) => {
-      const assistantsList: User[] = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          email: data.email,
-          name: data.name,
-          role: data.role,
-          block:
-            data.block || (data.startNumber >= 100 ? "block b" : "block a"),
-          startNumber: data.startNumber ?? 0,
-          color: data.color,
-          isActive: data.isActive,
-          createdAt: data.createdAt?.toDate() || new Date(),
-        } as User;
-      });
-      setAssistants(assistantsList);
-    });
-
-    return () => {
-      unsubscribeNumbers();
-      unsubscribeState();
-      unsubscribeUsers();
-    };
-  }, [user]);
 
   const myBlock = (user?.block || "block a").toLowerCase();
   const isBlockA = myBlock === "block a";
@@ -180,8 +105,7 @@ export default function AssistantPage() {
     if (currentTicket?.calledAt) {
       const elapsedMs = Date.now() - currentTicket.calledAt.getTime();
       const elapsed = Math.floor(elapsedMs / 1000);
-      const { doc: fsDoc, updateDoc } = await import("firebase/firestore");
-      await updateDoc(fsDoc(db, "queue_numbers", currentTicket.id), {
+      await updateDoc(doc(db, "queue_numbers", currentTicket.id), {
         serviceDurationSeconds: elapsed,
       });
     }

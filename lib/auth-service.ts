@@ -6,15 +6,11 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import {
-  collection,
   doc,
   setDoc,
   getDoc,
-  getDocs,
   deleteDoc,
   Timestamp,
-  query,
-  where,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import type { User, UserRole } from "./types";
@@ -104,30 +100,6 @@ export async function getUserProfile(userId: string): Promise<User | null> {
     isActive: data.isActive,
     createdAt: timestampToDate(data.createdAt),
   };
-}
-
-export async function getAllAssistants(): Promise<User[]> {
-  const q = query(
-    collection(db, USERS_COLLECTION),
-    where("role", "==", "assistant"),
-  );
-
-  const querySnapshot = await getDocs(q);
-
-  return querySnapshot.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      email: data.email,
-      name: data.name,
-      role: data.role,
-      block: data.block || (data.startNumber >= 100 ? "block b" : "block a"),
-      startNumber: data.startNumber ?? 0,
-      color: data.color,
-      isActive: data.isActive,
-      createdAt: timestampToDate(data.createdAt),
-    };
-  });
 }
 
 export async function deleteAssistant(userId: string): Promise<void> {
