@@ -182,15 +182,26 @@ export default function DisplayPage() {
     const getPreferredFrVoice = (): SpeechSynthesisVoice | null => {
       const voices = window.speechSynthesis.getVoices();
 
-      const preferredNames = [
+      // Voix féminines connues (Chrome/Google, macOS, Windows)
+      const femaleNames = [
+        "google français",
         "google french",
-        "thomas",
         "amelie",
+        "amélie",
+        "audrey",
         "marie",
+        "julie",
         "juliette",
+        "virginie",
+        "celine",
+        "céline",
+        "chloe",
+        "chloé",
+        "hortense",
+        "female",
       ];
 
-      for (const preferred of preferredNames) {
+      for (const preferred of femaleNames) {
         const match = voices.find(
           (v) =>
             v.name.toLowerCase().includes(preferred) && v.lang.startsWith("fr"),
@@ -198,9 +209,12 @@ export default function DisplayPage() {
         if (match) return match;
       }
 
+      // Voix masculines connues à éviter dans le fallback générique
+      const maleFrNames = ["thomas", "paul", "nicolas", "henri", "guillaume", "male"];
       const frFR = voices.find(
         (v) =>
           v.lang === "fr-FR" &&
+          !maleFrNames.some((m) => v.name.toLowerCase().includes(m)) &&
           !v.name.toLowerCase().includes("swiss") &&
           !v.name.toLowerCase().includes("suisse") &&
           !v.name.toLowerCase().includes("ch") &&
@@ -223,21 +237,49 @@ export default function DisplayPage() {
     const getPreferredEnVoice = (): SpeechSynthesisVoice | null => {
       const voices = window.speechSynthesis.getVoices();
 
-      const preferredNames = [
-        "google french",
-        "thomas",
-        "amelie",
-        "marie",
-        "juliette",
+      // Voix masculines connues (Chrome/Google, macOS, Windows)
+      const maleNames = [
+        "google uk english male",
+        "daniel",
+        "david",
+        "alex",
+        "fred",
+        "george",
+        "james",
+        "guy",
+        "male",
       ];
 
-      for (const preferred of preferredNames) {
+      for (const preferred of maleNames) {
         const match = voices.find(
           (v) =>
             v.name.toLowerCase().includes(preferred) && v.lang.startsWith("en"),
         );
         if (match) return match;
       }
+
+      // Voix féminines connues à éviter dans le fallback générique
+      const femaleEnNames = [
+        "female",
+        "zira",
+        "samantha",
+        "victoria",
+        "karen",
+        "moira",
+        "tessa",
+        "susan",
+        "linda",
+        "hazel",
+        "salli",
+        "joanna",
+        "kimberly",
+      ];
+      const enNonFemale = voices.find(
+        (v) =>
+          v.lang.startsWith("en") &&
+          !femaleEnNames.some((f) => v.name.toLowerCase().includes(f)),
+      );
+      if (enNonFemale) return enNonFemale;
 
       const enUS = voices.find((v) => v.lang === "en-US");
       if (enUS) return enUS;
