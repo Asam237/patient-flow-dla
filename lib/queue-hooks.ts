@@ -53,12 +53,18 @@ export function useQueueNumbers() {
   const [queueNumbers, setQueueNumbers] = useState<QueueNumber[]>([]);
 
   useEffect(() => {
-    return onSnapshot(collection(db, "queue_numbers"), (snapshot) => {
-      const numbers = snapshot.docs
-        .map((docSnap) => mapQueueNumber(docSnap.id, docSnap.data()))
-        .sort((a, b) => a.number - b.number);
-      setQueueNumbers(numbers);
-    });
+    return onSnapshot(
+      collection(db, "queue_numbers"),
+      (snapshot) => {
+        const numbers = snapshot.docs
+          .map((docSnap) => mapQueueNumber(docSnap.id, docSnap.data()))
+          .sort((a, b) => a.number - b.number);
+        setQueueNumbers(numbers);
+      },
+      (error) => {
+        console.error("[useQueueNumbers] Firestore listen error:", error);
+      },
+    );
   }, []);
 
   return queueNumbers;
@@ -69,10 +75,16 @@ export function useQueueState() {
   const [queueState, setQueueState] = useState<QueueState | null>(null);
 
   useEffect(() => {
-    return onSnapshot(doc(db, "queue_state", "current"), (docSnap) => {
-      if (!docSnap.exists()) return;
-      setQueueState(mapQueueState(docSnap.id, docSnap.data()));
-    });
+    return onSnapshot(
+      doc(db, "queue_state", "current"),
+      (docSnap) => {
+        if (!docSnap.exists()) return;
+        setQueueState(mapQueueState(docSnap.id, docSnap.data()));
+      },
+      (error) => {
+        console.error("[useQueueState] Firestore listen error:", error);
+      },
+    );
   }, []);
 
   return queueState;
@@ -83,9 +95,18 @@ export function useUsers() {
   const [users, setUsers] = useState<User[]>([]);
 
   useEffect(() => {
-    return onSnapshot(collection(db, "users"), (snapshot) => {
-      setUsers(snapshot.docs.map((docSnap) => mapUser(docSnap.id, docSnap.data())));
-    });
+    return onSnapshot(
+      collection(db, "users"),
+      (snapshot) => {
+        setUsers(snapshot.docs.map((docSnap) => mapUser(docSnap.id, docSnap.data())));
+      },
+      (error) => {
+        console.error(
+          "[useUsers] Firestore listen error (souvent un problème de règles Firestore : la lecture de 'users' nécessite request.auth != null, or /display n'est pas authentifié) :",
+          error,
+        );
+      },
+    );
   }, []);
 
   return users;

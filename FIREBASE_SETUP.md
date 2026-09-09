@@ -33,8 +33,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Collection des utilisateurs
+    // Lecture publique nécessaire : l'écran /display n'est pas authentifié
+    // et doit pouvoir lire le nom/la couleur des assistants pour l'affichage
+    // et l'annonce vocale du numéro appelé.
     match /users/{userId} {
-      allow read: if request.auth != null;
+      allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
       allow create: if request.auth != null;
     }
