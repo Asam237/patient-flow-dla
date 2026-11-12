@@ -10,12 +10,29 @@ import {
   setDoc,
   getDoc,
   deleteDoc,
+  updateDoc,
   Timestamp,
+  getFirestore,
 } from "firebase/firestore";
-import { auth, db } from "./firebase";
+import { initializeApp, getApps, deleteApp, FirebaseApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import app, { auth, db } from "./firebase";
 import type { User, UserRole } from "./types";
 
 const USERS_COLLECTION = "users";
+const SECONDARY_APP_NAME = "account-creation";
+
+/**
+ * Instance Firebase secondaire utilisée uniquement pour créer des comptes.
+ * createUserWithEmailAndPassword connecte automatiquement le nouvel utilisateur :
+ * sur l'instance principale, cela déconnecterait l'admin en cours.
+ */
+function getSecondaryApp(): FirebaseApp {
+  return (
+    getApps().find((a) => a.name === SECONDARY_APP_NAME) ||
+    initializeApp(app.options, SECONDARY_APP_NAME)
+  );
+}
 
 function timestampToDate(timestamp: any): Date {
   if (!timestamp) return new Date();
@@ -35,8 +52,10 @@ export async function createAssistantAccount(
   startNumber?: number,
   role: "assistant" | "dispatching" = "assistant",
 ): Promise<User> {
+  const secondaryApp = getSecondaryApp();
+  const secondaryAuth = getAuth(secondaryApp);
   const userCredential = await createUserWithEmailAndPassword(
-    auth,
+    secondaryAuth,
     email,
     password,
   );
@@ -57,13 +76,45 @@ export async function createAssistantAccount(
     createdAt: Timestamp.now(),
   };
 
-  await setDoc(doc(db, USERS_COLLECTION, userId), userData);
+  try {
+    // Écrit avec la session du nouvel utilisateur (règle "self-write" respectée)
+    await setDoc(doc(getFirestore(secondaryApp), USERS_COLLECTION, userId), userData);
+  } finally {
+    await firebaseSignOut(secondaryAuth);
+    await deleteApp(secondaryApp).catch(() => {});
+  }
 
   return {
     id: userId,
     ...userData,
     createdAt: new Date(),
   };
+}
+
+export interface UserAccountUpdate {
+  name?: string;
+  role?: "assistant" | "dispatching";
+  color?: string;
+  block?: "block a" | "block b";
+  startNumber?: number;
+  isActive?: boolean;
+}
+
+/**
+ * Met à jour le profil Firestore d'un compte (nom, rôle, bloc, couleur, statut).
+ * L'email et le mot de passe Firebase Auth ne peuvent pas être modifiés
+ * côté client pour un autre utilisateur.
+ */
+export async function updateUserAccount(
+  userId: string,
+  updates: UserAccountUpdate,
+): Promise<void> {
+  const data: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (value !== undefined) data[key] = value;
+  }
+  if (Object.keys(data).length === 0) return;
+  await updateDoc(doc(db, USERS_COLLECTION, userId), data);
 }
 
 export async function signIn(

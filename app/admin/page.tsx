@@ -12,6 +12,7 @@ import { useQueueNumbers, useQueueState, useUsers } from "@/lib/queue-hooks";
 import {
   createAssistantAccount,
   deleteAssistant,
+  updateUserAccount,
   signOut,
 } from "@/lib/auth-service";
 import { useAuth } from "@/lib/auth-context";
@@ -38,6 +39,7 @@ import {
   Hash,
   BarChart3,
   AlertTriangle,
+  Pencil,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { QueueNumber, User } from "@/lib/types";
@@ -231,6 +233,7 @@ export default function AdminPage() {
   const currentState = useQueueState();
   const users = useUsers();
   const assistants = users.filter((u) => u.role === "assistant");
+  const dispatchers = users.filter((u) => u.role === "dispatching");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">(
     "dashboard",
@@ -249,6 +252,17 @@ export default function AdminPage() {
     startNumber: "",
   });
   const { toast } = useToast();
+
+  // Modification d'un compte existant
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    role: "assistant" as "assistant" | "dispatching",
+    block: "block a" as Block,
+    startNumber: "",
+    color: "",
+    isActive: true,
+  });
 
   const isAdmin = user?.role === "admin";
   const isDispatching = user?.role === "dispatching";
@@ -469,9 +483,79 @@ export default function AdminPage() {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: "Deletion failed",
+        description:
+          error?.code === "permission-denied"
+            ? "Permission denied: update the Firestore rules (see FIREBASE_SETUP.md)."
+            : "Deletion failed",
         variant: "destructive",
       });
+    }
+  }
+
+  function openEditDialog(account: User) {
+    setEditingUser(account);
+    setEditForm({
+      name: account.name,
+      role: account.role === "dispatching" ? "dispatching" : "assistant",
+      block:
+        (account.block || "block a").toLowerCase() === "block b"
+          ? "block b"
+          : "block a",
+      startNumber:
+        account.startNumber !== undefined ? String(account.startNumber) : "",
+      color: account.color || assistantColors[0],
+      isActive: account.isActive !== false,
+    });
+  }
+
+  async function handleUpdateAssistant() {
+    if (!editingUser) return;
+    if (!editForm.name.trim()) {
+      toast({
+        title: "Required field",
+        description: "Name cannot be empty.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const parsedStart = parseInt(editForm.startNumber);
+    const startNumber = !isNaN(parsedStart)
+      ? parsedStart
+      : editForm.block === "block b"
+        ? 100
+        : 0;
+    if (startNumber < 0) {
+      toast({
+        title: "Invalid number",
+        description: "Starting number must be positive.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      setLoading(true);
+      await updateUserAccount(editingUser.id, {
+        name: editForm.name.trim(),
+        role: editForm.role,
+        color: editForm.color,
+        isActive: editForm.isActive,
+        ...(editForm.role === "assistant"
+          ? { block: editForm.block, startNumber }
+          : {}),
+      });
+      setEditingUser(null);
+      toast({ title: "Success", description: "Account updated successfully" });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description:
+          error?.code === "permission-denied"
+            ? "Permission denied: update the Firestore rules (see FIREBASE_SETUP.md)."
+            : "Update failed",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -525,9 +609,14 @@ export default function AdminPage() {
       setShowAssistantDialog(false);
       toast({ title: "Success", description: "Account created successfully" });
     } catch (error: any) {
+      const messages: Record<string, string> = {
+        "auth/email-already-in-use": "This email is already in use",
+        "auth/invalid-email": "Invalid email address",
+        "auth/weak-password": "Password must be at least 6 characters",
+      };
       toast({
         title: "Error",
-        description: "Email might be in use",
+        description: messages[error?.code] || "Account creation failed",
         variant: "destructive",
       });
     } finally {
@@ -882,49 +971,205 @@ export default function AdminPage() {
                   </Dialog>
                 </CardHeader>
                 <CardContent className="pt-6">
-                  <div className="grid md:grid-cols-2 gap-8">
-                    <div>
-                      <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-3 px-1">
-                        Block A Team
-                      </h4>
-                      <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
-                        {assistantsA.map((assistant) => (
-                          <AssistantRow
-                            key={assistant.id}
-                            assistant={assistant}
-                            onDelete={() => handleDeleteAssistant(assistant.id)}
-                          />
-                        ))}
-                        {assistantsA.length === 0 && (
-                          <p className="text-sm text-slate-400 px-1">
-                            No assistants assigned yet
-                          </p>
-                        )}
+                  <div className="grid md:grid-cols-3 gap-8">
+                    {[
+                      {
+                        title: "Block A Team",
+                        accent: "text-indigo-600",
+                        list: assistantsA,
+                        empty: "No assistants assigned yet",
+                      },
+                      {
+                        title: "Block B Team",
+                        accent: "text-cyan-600",
+                        list: assistantsB,
+                        empty: "No assistants assigned yet",
+                      },
+                      {
+                        title: "Dispatching",
+                        accent: "text-amber-600",
+                        list: dispatchers,
+                        empty: "No dispatching accounts yet",
+                      },
+                    ].map((group) => (
+                      <div key={group.title}>
+                        <h4
+                          className={`text-xs font-bold ${group.accent} uppercase tracking-widest mb-3 px-1`}
+                        >
+                          {group.title}
+                          <Badge variant="outline" className="ml-2 bg-slate-50">
+                            {group.list.length}
+                          </Badge>
+                        </h4>
+                        <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
+                          {group.list.map((account) => (
+                            <AssistantRow
+                              key={account.id}
+                              assistant={account}
+                              onEdit={() => openEditDialog(account)}
+                              onDelete={() => handleDeleteAssistant(account.id)}
+                            />
+                          ))}
+                          {group.list.length === 0 && (
+                            <p className="text-sm text-slate-400 px-1">
+                              {group.empty}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-cyan-600 uppercase tracking-widest mb-3 px-1">
-                        Block B Team
-                      </h4>
-                      <div className="space-y-3 max-h-[320px] overflow-y-auto pr-2">
-                        {assistantsB.map((assistant) => (
-                          <AssistantRow
-                            key={assistant.id}
-                            assistant={assistant}
-                            onDelete={() => handleDeleteAssistant(assistant.id)}
-                          />
-                        ))}
-                        {assistantsB.length === 0 && (
-                          <p className="text-sm text-slate-400 px-1">
-                            No assistants assigned yet
-                          </p>
-                        )}
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>
             )}
+
+            {/* Dialogue de modification d'un compte */}
+            <Dialog
+              open={editingUser !== null}
+              onOpenChange={(open) => !open && setEditingUser(null)}
+            >
+              <DialogContent className="rounded-[2rem]">
+                <DialogHeader>
+                  <DialogTitle>Edit Account</DialogTitle>
+                  <DialogDescription>
+                    {editingUser?.email} — email and password cannot be changed
+                    here.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label>Account Role</Label>
+                    <div className="flex gap-2">
+                      {(["assistant", "dispatching"] as const).map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => setEditForm({ ...editForm, role: r })}
+                          className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all uppercase ${
+                            editForm.role === r
+                              ? "bg-indigo-900 text-white border-indigo-900"
+                              : "bg-white text-slate-500 border-slate-200"
+                          }`}
+                        >
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-name">Full Name</Label>
+                    <Input
+                      id="edit-name"
+                      value={editForm.name}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, name: e.target.value })
+                      }
+                    />
+                  </div>
+                  {editForm.role === "assistant" && (
+                    <>
+                      <div className="space-y-2">
+                        <Label>Block Assignment</Label>
+                        <div className="flex gap-2">
+                          {(["block a", "block b"] as Block[]).map((b) => (
+                            <button
+                              key={b}
+                              type="button"
+                              onClick={() =>
+                                setEditForm({ ...editForm, block: b })
+                              }
+                              className={`flex-1 py-3 rounded-xl text-sm font-bold border transition-all ${
+                                editForm.block === b
+                                  ? "bg-indigo-600 text-white border-indigo-600"
+                                  : "bg-white text-slate-500 border-slate-200"
+                              }`}
+                            >
+                              {b.toUpperCase()}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-startNumber">Starting Number</Label>
+                        <Input
+                          id="edit-startNumber"
+                          type="number"
+                          placeholder={
+                            editForm.block === "block b" ? "e.g. 100" : "e.g. 0"
+                          }
+                          value={editForm.startNumber}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              startNumber: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                    </>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Profile Color</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {assistantColors.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          aria-label={c}
+                          onClick={() => setEditForm({ ...editForm, color: c })}
+                          className={`w-8 h-8 rounded-full border-2 transition-all ${
+                            editForm.color === c
+                              ? "border-slate-900 scale-110"
+                              : "border-transparent"
+                          }`}
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Account Status</Label>
+                    <div className="flex gap-2">
+                      {[
+                        { value: true, label: "Active" },
+                        { value: false, label: "Disabled" },
+                      ].map((opt) => (
+                        <button
+                          key={opt.label}
+                          type="button"
+                          onClick={() =>
+                            setEditForm({ ...editForm, isActive: opt.value })
+                          }
+                          className={`flex-1 py-2.5 rounded-xl text-xs font-bold border transition-all uppercase ${
+                            editForm.isActive === opt.value
+                              ? opt.value
+                                ? "bg-green-600 text-white border-green-600"
+                                : "bg-red-600 text-white border-red-600"
+                              : "bg-white text-slate-500 border-slate-200"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      A disabled account is signed out and cannot log in.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={handleUpdateAssistant}
+                    disabled={loading}
+                    className="w-full bg-indigo-600 rounded-xl py-6 text-lg"
+                  >
+                    {loading ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      "Save Changes"
+                    )}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
 
             {/* Ticket Format Documentation */}
             <div className="mb-6 p-5 rounded-2xl bg-indigo-50 border border-indigo-100">
@@ -1057,35 +1302,79 @@ export default function AdminPage() {
 
 function AssistantRow({
   assistant,
+  onEdit,
   onDelete,
 }: {
   assistant: User;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
+  const inactive = assistant.isActive === false;
   return (
-    <div className="flex items-center justify-between p-4 bg-slate-50/50 border border-slate-100 rounded-2xl hover:border-indigo-200 group">
-      <div className="flex items-center gap-4">
+    <div
+      className={`flex items-center justify-between p-4 bg-slate-50/50 border border-slate-100 rounded-2xl hover:border-indigo-200 group ${
+        inactive ? "opacity-60" : ""
+      }`}
+    >
+      <div className="flex items-center gap-4 min-w-0">
         <div
-          className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold"
-          style={{ backgroundColor: assistant.color }}
+          className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center text-white font-bold"
+          style={{ backgroundColor: assistant.color || "#94a3b8" }}
         >
-          {assistant.name.charAt(0)}
+          {assistant.name?.charAt(0)}
         </div>
-        <div>
-          <p className="font-semibold text-slate-800 leading-tight">
+        <div className="min-w-0">
+          <p className="font-semibold text-slate-800 leading-tight truncate">
             {assistant.name}
+            {inactive && (
+              <Badge className="ml-2 text-[9px] uppercase bg-red-100 text-red-600 border-none hover:bg-red-100">
+                Disabled
+              </Badge>
+            )}
           </p>
-          <p className="text-xs text-slate-500">{assistant.email}</p>
+          <p className="text-xs text-slate-500 truncate">{assistant.email}</p>
         </div>
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={onDelete}
-        className="opacity-0 group-hover:opacity-100 text-slate-300 hover:text-red-500 transition-all"
-      >
-        <Trash2 className="w-4 h-4" />
-      </Button>
+      <div className="flex items-center shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onEdit}
+          className="text-slate-300 hover:text-indigo-600"
+        >
+          <Pencil className="w-4 h-4" />
+        </Button>
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-slate-300 hover:text-red-500"
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Account</AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to delete the account of{" "}
+                <strong className="text-slate-900">{assistant.name}</strong> (
+                {assistant.email})? This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={onDelete}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
     </div>
   );
 }

@@ -36,9 +36,15 @@ service cloud.firestore {
     // Lecture publique nécessaire : l'écran /display n'est pas authentifié
     // et doit pouvoir lire le nom/la couleur des assistants pour l'affichage
     // et l'annonce vocale du numéro appelé.
+    // Un admin peut modifier/supprimer n'importe quel compte (Team Management).
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
     match /users/{userId} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
       allow create: if request.auth != null;
     }
 

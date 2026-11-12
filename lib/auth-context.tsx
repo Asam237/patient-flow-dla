@@ -41,7 +41,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (firebaseUser) {
         // Remplacement de getUserData par getUserProfile pour correspondre à n_auth-service.ts
         const userData = await getUserProfile(firebaseUser.uid);
-        setUser(userData);
+        // Compte désactivé par un admin : on coupe la session
+        if (userData && userData.isActive === false) {
+          await firebaseSignOut();
+          setUser(null);
+        } else {
+          setUser(userData);
+        }
       } else {
         setUser(null);
       }
