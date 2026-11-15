@@ -183,25 +183,15 @@ export default function DisplayPage() {
       const voices = window.speechSynthesis.getVoices();
 
       // Voix féminines connues (Chrome/Google, macOS, Windows)
-      const femaleNames = [
-        "google français",
+      const preferredNames = [
         "google french",
+        "thomas",
         "amelie",
-        "amélie",
-        "audrey",
         "marie",
-        "julie",
         "juliette",
-        "virginie",
-        "celine",
-        "céline",
-        "chloe",
-        "chloé",
-        "hortense",
-        "female",
       ];
 
-      for (const preferred of femaleNames) {
+      for (const preferred of preferredNames) {
         const match = voices.find(
           (v) =>
             v.name.toLowerCase().includes(preferred) && v.lang.startsWith("fr"),
@@ -210,7 +200,14 @@ export default function DisplayPage() {
       }
 
       // Voix masculines connues à éviter dans le fallback générique
-      const maleFrNames = ["thomas", "paul", "nicolas", "henri", "guillaume", "male"];
+      const maleFrNames = [
+        "thomas",
+        "paul",
+        "nicolas",
+        "henri",
+        "guillaume",
+        "male",
+      ];
       const frFR = voices.find(
         (v) =>
           v.lang === "fr-FR" &&
