@@ -11,6 +11,7 @@ import images from "@/assets/pictures";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTicket } from "@/lib/utils";
+import { useAnnouncer, type Announcement } from "@/hooks/use-announcer";
 
 export default function DisplayPage() {
   const [queueState, setQueueState] = useState<any>(null);
@@ -32,14 +33,6 @@ export default function DisplayPage() {
     assistantsRef.current = assistants;
   }, [assistants]);
 
-  const htmlAudioRef = useRef<HTMLAudioElement | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioBufferRef = useRef<AudioBuffer | null>(null);
-  const audioReadyRef = useRef<boolean>(false);
-
-  const frVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-  const enVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-
   // const carouselImages = [images.plan, images.plan1, images.qrcode];
   const carouselImages = [images.qrcode, images.plan1, images.plan2];
   const carouselData = [
@@ -60,285 +53,27 @@ export default function DisplayPage() {
     return () => clearInterval(interval);
   }, [carouselImages.length]);
 
-  const announcementQueueRef = useRef<
-    Array<{ ticketNumber: number; assistantName?: string; blockLabel?: string }>
-  >([]);
-  const isAnnouncingRef = useRef<boolean>(false);
+  // Pipeline audio partagé (son + annonce FR x1 / EN x1, file sans chevauchement)
+  const { audioRef, startAudio, enqueue } = useAnnouncer();
 
-  // =========================
-  // INIT AUDIO
-  // =========================
-  const handleStartAudio = async () => {
-    try {
-      const response = await fetch("/sound.mp3");
-      const arrayBuffer = await response.arrayBuffer();
-      const AudioCtx =
-        window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) {
-        const ctx = new AudioCtx();
-        await ctx.resume();
-        audioContextRef.current = ctx;
-        try {
-          audioBufferRef.current = await ctx.decodeAudioData(arrayBuffer);
-          audioReadyRef.current = true;
-        } catch (error) {
-          console.warn("decodeAudioData failed:", error);
-        }
-      }
-      if (htmlAudioRef.current) {
-        htmlAudioRef.current.volume = 0.01;
-        await htmlAudioRef.current.play().catch(() => {});
-        htmlAudioRef.current.pause();
-        htmlAudioRef.current.currentTime = 0;
-        htmlAudioRef.current.volume = 1;
-      }
-      if (typeof window !== "undefined" && window.speechSynthesis) {
-        window.speechSynthesis.getVoices();
-        const warmup = new SpeechSynthesisUtterance(" ");
-        warmup.volume = 0.01;
-        window.speechSynthesis.speak(warmup);
-      }
-    } catch (e) {
-      console.error("Audio init failed:", e);
-    }
-  };
-
-  const playNotificationSound = (): Promise<void> => {
-    return new Promise((resolve) => {
-      if (
-        audioContextRef.current &&
-        audioBufferRef.current &&
-        audioReadyRef.current
-      ) {
-        const ctx = audioContextRef.current;
-        const doPlay = () => {
-          const source = ctx.createBufferSource();
-          source.buffer = audioBufferRef.current!;
-          source.connect(ctx.destination);
-          source.start(0);
-          setTimeout(() => resolve(), 2000);
-        };
-        if (ctx.state === "suspended") {
-          ctx
-            .resume()
-            .then(doPlay)
-            .catch(() => resolve());
-        } else {
-          doPlay();
-        }
-        return;
-      }
-      if (htmlAudioRef.current) {
-        const audio = htmlAudioRef.current;
-        audio.currentTime = 0;
-        audio.play().catch(() => {});
-        setTimeout(() => resolve(), 2000);
-        return;
-      }
-      resolve();
-    });
-  };
-
-  const processQueue = async () => {
-    if (isAnnouncingRef.current) return;
-    if (announcementQueueRef.current.length === 0) return;
-    isAnnouncingRef.current = true;
-    while (announcementQueueRef.current.length > 0) {
-      const next = announcementQueueRef.current.shift()!;
-      await announceTicketBilingual(
-        next.ticketNumber,
-        next.assistantName,
-        next.blockLabel,
-      );
-    }
-    isAnnouncingRef.current = false;
-  };
-
-  const announceTicketBilingual = async (
+  // Construit le texte bilingue de l'annonce d'un ticket appelé
+  const buildTicketAnnouncement = (
     ticketNumber: number,
     assistantName?: string,
     blockLabel?: string,
-  ) => {
-    await playNotificationSound();
-
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-
-    window.speechSynthesis.cancel();
-
+  ): Announcement => {
     const formatted = formatTicket(ticketNumber);
     const guichetNumber = assistantName ? assistantName.replace(/\D/g, "") : "";
+    const block = blockLabel ? `, ${blockLabel}` : "";
 
-    const blockFr = blockLabel ? `, ${blockLabel}` : "";
-    const blockEn = blockLabel ? `, ${blockLabel}` : "";
-
-    const frText = guichetNumber
-      ? `Numéro ${formatted}, veuillez vous rendre au box numéro ${guichetNumber}${blockFr}`
-      : `Numéro ${formatted}, veuillez vous rendre au box ${assistantName || ""}${blockFr}`;
-
-    const enText = guichetNumber
-      ? `Ticket number ${formatted}, please proceed to box number ${guichetNumber}${blockEn}`
-      : `Ticket number ${formatted}, please proceed to box ${assistantName || ""}${blockEn}`;
-
-    const getPreferredFrVoice = (): SpeechSynthesisVoice | null => {
-      const voices = window.speechSynthesis.getVoices();
-
-      // Voix féminines connues (Chrome/Google, macOS, Windows)
-      const preferredNames = [
-        "google french",
-        "thomas",
-        "amelie",
-        "marie",
-        "juliette",
-      ];
-
-      for (const preferred of preferredNames) {
-        const match = voices.find(
-          (v) =>
-            v.name.toLowerCase().includes(preferred) && v.lang.startsWith("fr"),
-        );
-        if (match) return match;
-      }
-
-      // Voix masculines connues à éviter dans le fallback générique
-      const maleFrNames = [
-        "thomas",
-        "paul",
-        "nicolas",
-        "henri",
-        "guillaume",
-        "male",
-      ];
-      const frFR = voices.find(
-        (v) =>
-          v.lang === "fr-FR" &&
-          !maleFrNames.some((m) => v.name.toLowerCase().includes(m)) &&
-          !v.name.toLowerCase().includes("swiss") &&
-          !v.name.toLowerCase().includes("suisse") &&
-          !v.name.toLowerCase().includes("ch") &&
-          !v.name.toLowerCase().includes("canada") &&
-          !v.name.toLowerCase().includes("québec"),
-      );
-      if (frFR) return frFR;
-
-      const anyFrFR = voices.find((v) => v.lang === "fr-FR");
-      if (anyFrFR) return anyFrFR;
-
-      const anyFr = voices.find((v) => v.lang.startsWith("fr"));
-      if (anyFr) return anyFr;
-
-      return frVoiceRef.current;
+    return {
+      fr: guichetNumber
+        ? `Numéro ${formatted}, veuillez vous rendre au box numéro ${guichetNumber}${block}`
+        : `Numéro ${formatted}, veuillez vous rendre au box ${assistantName || ""}${block}`,
+      en: guichetNumber
+        ? `Ticket number ${formatted}, please proceed to box number ${guichetNumber}${block}`
+        : `Ticket number ${formatted}, please proceed to box ${assistantName || ""}${block}`,
     };
-
-    const preferredFrVoice = getPreferredFrVoice();
-
-    const getPreferredEnVoice = (): SpeechSynthesisVoice | null => {
-      const voices = window.speechSynthesis.getVoices();
-
-      // Voix masculines connues (Chrome/Google, macOS, Windows)
-      const maleNames = [
-        "google uk english male",
-        "daniel",
-        "david",
-        "alex",
-        "fred",
-        "george",
-        "james",
-        "guy",
-        "male",
-      ];
-
-      for (const preferred of maleNames) {
-        const match = voices.find(
-          (v) =>
-            v.name.toLowerCase().includes(preferred) && v.lang.startsWith("en"),
-        );
-        if (match) return match;
-      }
-
-      // Voix féminines connues à éviter dans le fallback générique
-      const femaleEnNames = [
-        "female",
-        "zira",
-        "samantha",
-        "victoria",
-        "karen",
-        "moira",
-        "tessa",
-        "susan",
-        "linda",
-        "hazel",
-        "salli",
-        "joanna",
-        "kimberly",
-      ];
-      const enNonFemale = voices.find(
-        (v) =>
-          v.lang.startsWith("en") &&
-          !femaleEnNames.some((f) => v.name.toLowerCase().includes(f)),
-      );
-      if (enNonFemale) return enNonFemale;
-
-      const enUS = voices.find((v) => v.lang === "en-US");
-      if (enUS) return enUS;
-
-      const anyEn = voices.find((v) => v.lang.startsWith("en"));
-      if (anyEn) return anyEn;
-
-      if (!enVoiceRef.current) {
-        console.warn(
-          "[TTS] Aucune voix anglaise disponible sur cet appareil — l'annonce anglaise sera lue avec la voix par défaut (souvent française).",
-        );
-      }
-
-      return enVoiceRef.current;
-    };
-
-    const preferredEnVoice = getPreferredEnVoice();
-
-    const speakWithPromise = (
-      text: string,
-      lang: string,
-      voice: SpeechSynthesisVoice | null,
-    ): Promise<void> => {
-      return new Promise((resolve) => {
-        const msg = new SpeechSynthesisUtterance(text);
-
-        msg.lang = lang;
-
-        if (voice) {
-          msg.voice = voice;
-        }
-
-        msg.rate = 0.82;
-        msg.pitch = 0.85;
-        msg.volume = 1;
-
-        msg.onend = () => resolve();
-        msg.onerror = () => resolve();
-
-        msg.onstart = () => {
-          if ((window.speechSynthesis as any)._keepAlive) return;
-
-          (window.speechSynthesis as any)._keepAlive = setInterval(() => {
-            if (!window.speechSynthesis.speaking) {
-              clearInterval((window.speechSynthesis as any)._keepAlive);
-              (window.speechSynthesis as any)._keepAlive = null;
-            } else {
-              window.speechSynthesis.pause();
-              window.speechSynthesis.resume();
-            }
-          }, 5000);
-        };
-
-        window.speechSynthesis.speak(msg);
-      });
-    };
-
-    // Français x2
-    await speakWithPromise(frText, "fr-FR", preferredFrVoice);
-
-    // Anglais x2
-    await speakWithPromise(enText, "en-US", preferredEnVoice);
   };
 
   useEffect(() => {
@@ -375,13 +110,9 @@ export default function DisplayPage() {
             "Guichet";
 
           // UN SEUL PUSH DANS LA FILE D'ATTENTE
-          announcementQueueRef.current.push({
-            ticketNumber: newNumberA,
-            assistantName,
-            blockLabel: "Block A",
-          });
-
-          processQueue();
+          enqueue(
+            buildTicketAnnouncement(newNumberA, assistantName, "Block A"),
+          );
           setIsNewNumberA(true);
           setTimeout(() => setIsNewNumberA(false), 6000);
         }
@@ -413,13 +144,9 @@ export default function DisplayPage() {
             "Guichet";
 
           // UN SEUL PUSH DANS LA FILE D'ATTENTE
-          announcementQueueRef.current.push({
-            ticketNumber: newNumberB,
-            assistantName,
-            blockLabel: "Block B",
-          });
-
-          processQueue();
+          enqueue(
+            buildTicketAnnouncement(newNumberB, assistantName, "Block B"),
+          );
           setIsNewNumberB(true);
           setTimeout(() => setIsNewNumberB(false), 6000);
         }
@@ -455,11 +182,9 @@ export default function DisplayPage() {
     return () => {
       unsubscribeState();
       unsubscribeNumbers();
-      if (audioContextRef.current) {
-        audioContextRef.current.close().catch(() => {});
-      }
     };
-  }, []);
+    // enqueue est stable (useCallback) : l'abonnement n'est pas recréé
+  }, [enqueue]);
 
   useEffect(() => {
     const updateTime = () =>
@@ -494,7 +219,7 @@ export default function DisplayPage() {
   return (
     <div className="h-screen bg-[#084B9A] text-slate-900 overflow-hidden font-sans flex flex-col p-6 lg:p-10">
       <audio
-        ref={htmlAudioRef}
+        ref={audioRef}
         src="/sound.mp3"
         preload="auto"
         className="hidden"
@@ -518,7 +243,7 @@ export default function DisplayPage() {
             </p>
             <button
               onClick={async () => {
-                await handleStartAudio();
+                await startAudio();
                 setIsAudioReady(true);
               }}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white py-5 rounded-2xl font-bold text-xl transition-all shadow-lg"
