@@ -70,6 +70,32 @@ export function useQueueNumbers() {
   return queueNumbers;
 }
 
+/**
+ * Historique temps réel des tickets archivés lors des resets (`queue_history`).
+ * Sert uniquement aux statistiques : à combiner avec useQueueNumbers().
+ */
+export function useQueueHistory() {
+  const [history, setHistory] = useState<QueueNumber[]>([]);
+
+  useEffect(() => {
+    return onSnapshot(
+      collection(db, "queue_history"),
+      (snapshot) => {
+        setHistory(
+          snapshot.docs.map((docSnap) =>
+            mapQueueNumber(docSnap.id, docSnap.data()),
+          ),
+        );
+      },
+      (error) => {
+        console.error("[useQueueHistory] Firestore listen error:", error);
+      },
+    );
+  }, []);
+
+  return history;
+}
+
 /** État courant de la file (numéro en cours / suivant, par bloc) en temps réel. */
 export function useQueueState() {
   const [queueState, setQueueState] = useState<QueueState | null>(null);

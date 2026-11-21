@@ -59,6 +59,14 @@ service cloud.firestore {
       allow read: if true;
       allow write: if request.auth != null;
     }
+
+    // Historique des tickets traités (statistiques), alimenté par le reset.
+    // Pas de suppression : le reset ne doit jamais effacer les statistiques.
+    match /queue_history/{document=**} {
+      allow read: if true;
+      allow create, update: if request.auth != null;
+      allow delete: if false;
+    }
   }
 }
 ```

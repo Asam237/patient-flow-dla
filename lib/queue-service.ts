@@ -17,6 +17,8 @@ import type { QueueNumber, QueueState } from "./types";
 
 const QUEUE_NUMBERS_COLLECTION = "queue_numbers";
 const QUEUE_STATE_COLLECTION = "queue_state";
+/** Archive des tickets traités : alimentée par resetQueue(), jamais vidée. */
+const QUEUE_HISTORY_COLLECTION = "queue_history";
 
 function timestampToDate(timestamp: any): Date {
   if (!timestamp) return new Date();
@@ -357,13 +359,53 @@ export async function deleteQueueNumber(id: string): Promise<void> {
   await deleteDoc(doc(db, QUEUE_NUMBERS_COLLECTION, id));
 }
 
+/**
+ * Réinitialise les données opérationnelles (tickets de la file + queue_state)
+ * SANS perdre les statistiques : chaque ticket déjà appelé (current/completed)
+ * est d'abord archivé dans `queue_history`, qui n'est jamais vidé par le reset.
+ * Les tickets jamais appelés ("waiting") sont simplement retirés de la file.
+ */
 export async function resetQueue(): Promise<void> {
   const querySnapshot = await getDocs(collection(db, QUEUE_NUMBERS_COLLECTION));
-  const batch = writeBatch(db);
+  const resetAt = Timestamp.now();
+
+  // Limite Firestore : 500 opérations par batch (archive + suppression = 2 ops/ticket)
+  const MAX_OPS_PER_BATCH = 450;
+  let batch = writeBatch(db);
+  let opsInBatch = 0;
+  const commits: Promise<void>[] = [];
+
+  const ensureRoom = (ops: number) => {
+    if (opsInBatch + ops > MAX_OPS_PER_BATCH) {
+      commits.push(batch.commit());
+      batch = writeBatch(db);
+      opsInBatch = 0;
+    }
+  };
+
   querySnapshot.docs.forEach((docData) => {
+    const data = docData.data();
+    const wasCalled = data.status === "completed" || data.status === "current";
+    ensureRoom(wasCalled ? 2 : 1);
+
+    if (wasCalled) {
+      // Même id que dans queue_numbers : un reset relancé après un échec
+      // partiel réécrit la même archive au lieu de la dupliquer.
+      batch.set(doc(db, QUEUE_HISTORY_COLLECTION, docData.id), {
+        ...data,
+        status: "completed",
+        completedAt: data.completedAt ?? resetAt,
+        archivedAt: resetAt,
+      });
+      opsInBatch++;
+    }
+
     batch.delete(docData.ref);
+    opsInBatch++;
   });
-  await batch.commit();
+
+  if (opsInBatch > 0) commits.push(batch.commit());
+  await Promise.all(commits);
 
   const stateRef = doc(db, QUEUE_STATE_COLLECTION, "current");
   await setDoc(stateRef, {

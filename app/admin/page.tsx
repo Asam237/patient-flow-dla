@@ -8,7 +8,12 @@ import {
   resetQueue,
   formatNumberToCode,
 } from "@/lib/queue-service";
-import { useQueueNumbers, useQueueState, useUsers } from "@/lib/queue-hooks";
+import {
+  useQueueHistory,
+  useQueueNumbers,
+  useQueueState,
+  useUsers,
+} from "@/lib/queue-hooks";
 import {
   createAssistantAccount,
   deleteAssistant,
@@ -230,6 +235,8 @@ export default function AdminPage() {
   const [newNumberA, setNewNumberA] = useState({ start: "", end: "" });
   const [newNumberB, setNewNumberB] = useState({ start: "", end: "" });
   const queueNumbers = useQueueNumbers();
+  // Tickets archivés lors des resets : conservés pour les statistiques
+  const queueHistory = useQueueHistory();
   const currentState = useQueueState();
   const users = useUsers();
   const assistants = users.filter((u) => u.role === "assistant");
@@ -560,7 +567,9 @@ export default function AdminPage() {
   }
 
   async function handleReset() {
-    if (confirm("Are you sure? This will clear all data for both blocks.")) {
+    if (confirm(
+        "Are you sure? This will clear the queue for both blocks. Statistics are kept.",
+      )) {
       try {
         setLoading(true);
         await resetQueue();
@@ -1245,7 +1254,7 @@ export default function AdminPage() {
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
             <AnalyticsPanel
-              queueNumbers={queueNumbers}
+              queueNumbers={[...queueHistory, ...queueNumbers]}
               assistants={assistants}
             />
           </div>

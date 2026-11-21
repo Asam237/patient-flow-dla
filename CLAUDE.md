@@ -48,7 +48,7 @@ All Firestore reads/writes go through `lib/`, not directly from components:
 - `lib/queue-service.ts` — one-shot queue mutations/reads (`addNumberToQueue`, `callNextNumber`, `completeCurrentNumber`, `deleteQueueNumber`, `resetQueue`, `getAllQueueNumbers`, `getQueueState`).
 - `lib/queue-hooks.ts` — real-time subscriptions via `onSnapshot` (`useQueueNumbers`, `useQueueState`, `useUsers`), each with its own Firestore-document-shape mapper (keep these mappers' defaulting/fallback logic in sync with `queue-service.ts` when the Firestore document shape changes).
 
-Collections: `users`, `queue_numbers`, `queue_state` (single doc, id `current`). Firestore security rules: public read on `queue_numbers`/`queue_state`, write requires auth; `users` writes are self-only. See `FIREBASE_SETUP.md` for the exact rules text.
+Collections: `users`, `queue_numbers`, `queue_state` (single doc, id `current`), `queue_history` (archive of called tickets written by `resetQueue()` before it clears `queue_numbers`; never deleted — statistics panels read `useQueueHistory()` + `useQueueNumbers()` combined, so a reset must never wipe stats). Firestore security rules: public read on `queue_numbers`/`queue_state`, write requires auth; `users` writes are self-only. See `FIREBASE_SETUP.md` for the exact rules text.
 
 ### UI
 `components/ui/` is shadcn/ui (generated — prefer adding new primitives via shadcn conventions over hand-rolling). Path alias `@/*` maps to repo root (`tsconfig.json`). `next.config.js` disables ESLint-during-build and image optimization (static export-friendly, matches Netlify hosting).

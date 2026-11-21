@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { callNextNumber, formatNumberToCode } from "@/lib/queue-service";
-import { useQueueNumbers, useQueueState, useUsers } from "@/lib/queue-hooks";
+import {
+  useQueueHistory,
+  useQueueNumbers,
+  useQueueState,
+  useUsers,
+} from "@/lib/queue-hooks";
 import { signOut } from "@/lib/auth-service";
 import { useAuth } from "@/lib/auth-context";
 import { Button } from "@/components/ui/button";
@@ -35,6 +40,8 @@ export default function AssistantPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
   const queueNumbers = useQueueNumbers();
+  // Tickets archivés lors des resets : conservés pour les statistiques
+  const queueHistory = useQueueHistory();
   const currentState = useQueueState();
   const assistants = useUsers();
   const [loading, setLoading] = useState(false);
@@ -54,6 +61,9 @@ export default function AssistantPage() {
   const myBlock = (user?.block || "block a").toLowerCase();
   const isBlockA = myBlock === "block a";
   const blockNumbers = queueNumbers.filter(
+    (n) => (n.block || "block a").toLowerCase() === myBlock,
+  );
+  const blockHistory = queueHistory.filter(
     (n) => (n.block || "block a").toLowerCase() === myBlock,
   );
 
@@ -480,7 +490,7 @@ export default function AssistantPage() {
         {/* Panel Analytics */}
         {activeTab === "analytics" && (
           <AnalyticsPanel
-            queueNumbers={blockNumbers}
+            queueNumbers={[...blockHistory, ...blockNumbers]}
             assistants={assistants.filter(
               (a) => (a.block || "block a").toLowerCase() === myBlock,
             )}
