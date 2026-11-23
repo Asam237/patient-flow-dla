@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { callNextNumber, formatNumberToCode } from "@/lib/queue-service";
 import {
   useQueueHistory,
   useQueueNumbers,
-  useQueueState,
   useUsers,
 } from "@/lib/queue-hooks";
 import { signOut } from "@/lib/auth-service";
@@ -40,10 +39,12 @@ export default function AssistantPage() {
   const queueNumbers = useQueueNumbers();
   // Tickets archivés lors des resets : conservés pour les statistiques
   const queueHistory = useQueueHistory();
-  const currentState = useQueueState();
   const assistants = useUsers();
   const [loading, setLoading] = useState(false);
   const [callingId, setCallingId] = useState<string | null>(null);
+  // Verrou local : un seul appel à la fois par box (évite les doubles clics)
+  const callInFlightRef = useRef(false);
+  const isCalling = loading || callingId !== null;
   const { toast } = useToast();
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">(
@@ -57,7 +58,6 @@ export default function AssistantPage() {
   }, [user, authLoading, router]);
 
   const myBlock = (user?.block || "block a").toLowerCase();
-  const isBlockA = myBlock === "block a";
   const blockNumbers = queueNumbers.filter(
     (n) => (n.block || "block a").toLowerCase() === myBlock,
   );
@@ -69,40 +69,32 @@ export default function AssistantPage() {
   const waitingNumbers = blockNumbers.filter((n) => n.status === "waiting");
   const waitingCount = waitingNumbers.length;
 
-  const blockCurrentNumber = isBlockA
-    ? currentState?.currentNumberA
-    : currentState?.currentNumberB;
-  const blockNextNumber = isBlockA
-    ? currentState?.nextNumberA
-    : currentState?.nextNumberB;
-  const blockCurrentAssistantId = isBlockA
-    ? currentState?.currentAssistantIdA
-    : currentState?.currentAssistantIdB;
-  const currentAssistant = assistants.find(
-    (a) => a.id === blockCurrentAssistantId,
-  );
-  const isMyTurn = user ? blockCurrentAssistantId === user.id : false;
+  // Prochain ticket en FIFO, calculé en temps réel depuis la file du bloc
+  const blockNextNumber = waitingNumbers[0]?.number ?? null;
+
+  // Ticket en cours de CE box. Plusieurs box d'un même bloc servent en
+  // parallèle : chacun ne voit que le sien (et non le dernier appel du bloc).
+  const myCurrentTicket = user
+    ? blockNumbers
+        .filter((n) => n.status === "current" && n.assistantId === user.id)
+        .sort(
+          (a, b) =>
+            (b.calledAt?.getTime() ?? 0) - (a.calledAt?.getTime() ?? 0),
+        )[0]
+    : undefined;
+  const myCurrentCalledAt = myCurrentTicket?.calledAt?.getTime() ?? null;
 
   useEffect(() => {
-    // Plusieurs box d'un bloc peuvent avoir un ticket en cours : le chrono
-    // suit celui affiché comme ticket actuel du bloc.
-    const currentTicket = blockNumbers.find(
-      (n) => n.status === "current" && n.number === blockCurrentNumber,
-    );
-    if (!currentTicket?.calledAt) {
+    if (myCurrentCalledAt == null) {
       setElapsedSeconds(0);
       return;
     }
-    setElapsedSeconds(
-      Math.floor((Date.now() - currentTicket.calledAt.getTime()) / 1000),
-    );
-    const interval = setInterval(() => {
-      setElapsedSeconds(
-        Math.floor((Date.now() - currentTicket.calledAt!.getTime()) / 1000),
-      );
-    }, 1000);
+    const tick = () =>
+      setElapsedSeconds(Math.floor((Date.now() - myCurrentCalledAt) / 1000));
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [queueNumbers, myBlock, blockCurrentNumber]);
+  }, [myCurrentCalledAt]);
 
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60)
@@ -125,6 +117,8 @@ export default function AssistantPage() {
       return;
     }
 
+    if (callInFlightRef.current) return;
+    callInFlightRef.current = true;
     try {
       setLoading(true);
       const called = await callNextNumber(
@@ -146,12 +140,14 @@ export default function AssistantPage() {
         variant: "destructive",
       });
     } finally {
+      callInFlightRef.current = false;
       setLoading(false);
     }
   }
 
   async function handleCallSpecific(ticketId: string) {
-    if (!user) return;
+    if (!user || callInFlightRef.current) return;
+    callInFlightRef.current = true;
     try {
       setCallingId(ticketId);
       const called = await callNextNumber(
@@ -160,7 +156,13 @@ export default function AssistantPage() {
         ticketId,
         myBlock,
       );
-      if (called) {
+      if (called.id !== ticketId) {
+        // Ticket pris par un autre box juste avant : FIFO, on a reçu le suivant
+        toast({
+          title: "Ticket déjà appelé par un autre box",
+          description: `Le ticket suivant ${formatNumberToCode(called.number)} vous a été attribué.`,
+        });
+      } else {
         toast({
           title: "Number Called",
           description: `Ticket ${formatNumberToCode(called.number)} has been called`,
@@ -173,6 +175,7 @@ export default function AssistantPage() {
         variant: "destructive",
       });
     } finally {
+      callInFlightRef.current = false;
       setCallingId(null);
     }
   }
@@ -292,11 +295,11 @@ export default function AssistantPage() {
                         Current Ticket
                       </p>
                       <p className="text-7xl font-black text-blue-900 tracking-tighter">
-                        {blockCurrentNumber != null
-                          ? formatNumberToCode(blockCurrentNumber)
+                        {myCurrentTicket
+                          ? formatNumberToCode(myCurrentTicket.number)
                           : "--"}
                       </p>
-                      {blockCurrentNumber != null && (
+                      {myCurrentTicket && (
                         <div className="mt-3 flex items-center gap-2 bg-blue-100 rounded-full px-3 py-1.5 w-fit">
                           <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                           <span className="text-sm font-bold text-blue-700 tabular-nums">
@@ -304,16 +307,14 @@ export default function AssistantPage() {
                           </span>
                         </div>
                       )}
-                      {currentAssistant && (
+                      {myCurrentTicket && (
                         <div className="mt-3 flex items-center gap-2">
                           <div
                             className="w-2 h-2 rounded-full"
-                            style={{ backgroundColor: currentAssistant.color }}
+                            style={{ backgroundColor: user.color }}
                           />
                           <span className="text-xs font-medium text-slate-500 truncate">
-                            {isMyTurn
-                              ? "Assigned to You"
-                              : `Assigned to ${currentAssistant.name}`}
+                            Assigned to You
                           </span>
                         </div>
                       )}
@@ -334,7 +335,7 @@ export default function AssistantPage() {
                   {/* BOUTON BLOQUÉ S'IL N'Y A PAS DE TICKET EN ATTENTE */}
                   <Button
                     onClick={handleCallNext}
-                    disabled={loading || waitingCount === 0}
+                    disabled={isCalling || waitingCount === 0}
                     className="w-full h-20 text-xl font-bold rounded-2xl bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed shadow-lg shadow-blue-200 transition-all active:scale-[0.98]"
                   >
                     {loading ? (
@@ -439,7 +440,7 @@ export default function AssistantPage() {
                                     {formatDuration(num.serviceDurationSeconds)}
                                   </span>
                                 )}
-                                {isCurrent && num.number === blockCurrentNumber && (
+                                {isCurrent && num.id === myCurrentTicket?.id && (
                                   <span className="text-[11px] text-blue-500 tabular-nums font-semibold">
                                     {formatDuration(elapsedSeconds)}
                                   </span>
@@ -448,7 +449,7 @@ export default function AssistantPage() {
                                   <Button
                                     size="icon"
                                     variant="ghost"
-                                    disabled={callingId === num.id}
+                                    disabled={isCalling}
                                     onClick={() => handleCallSpecific(num.id)}
                                     className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50"
                                     title="Call this ticket"

@@ -168,13 +168,21 @@ export async function getNextWaitingNumber(
 /** Levée quand le ticket visé a été pris par un autre box entre-temps. */
 class TicketAlreadyTakenError extends Error {}
 
+/** Nombre max de tickets relus dans la transaction pour calculer le "suivant". */
+const NEXT_LOOKAHEAD = 10;
+
 /**
- * Appelle un ticket pour un box (assistant) d'un bloc donné.
+ * Appelle un ticket pour un box (assistant) d'un bloc donné, en FIFO.
  *
- * Plusieurs box d'un même bloc peuvent appeler au même moment : la prise du
- * ticket se fait donc dans une transaction Firestore qui relit le ticket et
- * vérifie qu'il est toujours "waiting" avant de le passer à "current". Si un
- * autre box l'a pris entre-temps, on passe au ticket en attente suivant.
+ * Plusieurs box d'un même bloc peuvent appeler au même moment. La prise du
+ * ticket se fait dans une transaction Firestore qui relit le ticket et
+ * vérifie qu'il est toujours "waiting" avant de le passer à "current" :
+ * - le premier box dont la transaction est validée obtient le ticket ;
+ * - les autres voient leur transaction rejouée, constatent que le ticket est
+ *   pris et passent au ticket en attente suivant (ordre croissant = FIFO).
+ * Si un ticket précis (ticketId) était demandé et qu'il vient d'être pris,
+ * on bascule aussi sur le suivant en FIFO : l'appelant peut le détecter en
+ * comparant l'id retourné à ticketId.
  * Seul le ticket "current" de CE box est clôturé (pas ceux des autres box).
  */
 export async function callNextNumber(
@@ -206,108 +214,120 @@ export async function callNextNumber(
     .filter((n) => n.status === "current" && n.assistantId === assistantId)
     .map((n) => n.id);
 
-  // 2. Candidats, dans l'ordre de priorité
-  const candidates: string[] = ticketId
-    ? [ticketId]
-    : allBlockNumbers
-        .filter((n) => n.status === "waiting")
-        .sort((a, b) => a.number - b.number)
-        .map((n) => n.id);
+  // File FIFO : tickets en attente du bloc, du plus petit au plus grand
+  const fifo = allBlockNumbers
+    .filter((n) => n.status === "waiting")
+    .sort((a, b) => a.number - b.number)
+    .map((n) => n.id);
+
+  // 2. Candidats : le ticket demandé d'abord, puis le reste de la file en FIFO
+  const candidates = ticketId
+    ? [ticketId, ...fifo.filter((id) => id !== ticketId)]
+    : fifo;
 
   if (candidates.length === 0) {
     throw new Error("Plus de tickets en attente dans ce bloc.");
   }
 
   const stateRef = doc(db, QUEUE_STATE_COLLECTION, "current");
+  const ticketRef = (id: string) => doc(db, QUEUE_NUMBERS_COLLECTION, id);
 
   for (const candidateId of candidates) {
     try {
-      return await runTransaction(db, async (tx) => {
-        const ticketRef = doc(db, QUEUE_NUMBERS_COLLECTION, candidateId);
-        const myCurrentRefs = myCurrentIds.map((id) =>
-          doc(db, QUEUE_NUMBERS_COLLECTION, id),
-        );
-
-        // Toutes les lectures avant les écritures (contrainte des transactions)
-        const ticketSnap = await tx.get(ticketRef);
-        const myCurrentSnaps = await Promise.all(
-          myCurrentRefs.map((ref) => tx.get(ref)),
-        );
-
-        if (!ticketSnap.exists() || ticketSnap.data().status !== "waiting") {
-          throw new TicketAlreadyTakenError();
-        }
-
-        const now = Timestamp.now();
-
-        // 3. Clôturer le ticket précédent de ce box (avec sa durée de service)
-        myCurrentSnaps.forEach((snap) => {
-          if (!snap.exists() || snap.data().status !== "current") return;
-          const prev = snap.data();
-          const update: Record<string, any> = {
-            status: "completed",
-            completedAt: now,
-          };
-          if (prev.calledAt?.toMillis && prev.serviceDurationSeconds == null) {
-            update.serviceDurationSeconds = Math.floor(
-              (now.toMillis() - prev.calledAt.toMillis()) / 1000,
-            );
+      return await runTransaction(
+        db,
+        async (tx) => {
+          // Toutes les lectures avant les écritures (contrainte des transactions).
+          // Chaque document lu est verrouillé de façon optimiste : si un autre
+          // box le modifie avant notre validation, la transaction est rejouée.
+          const ticketSnap = await tx.get(ticketRef(candidateId));
+          if (!ticketSnap.exists() || ticketSnap.data().status !== "waiting") {
+            throw new TicketAlreadyTakenError();
           }
-          tx.update(snap.ref, update);
-        });
 
-        // 4. Prendre le ticket pour ce box
-        tx.update(ticketRef, {
-          status: "current",
-          assistantId: assistantId || null,
-          assistantName: assistantName || null,
-          calledAt: now,
-        });
+          const myCurrentSnaps = await Promise.all(
+            myCurrentIds.map((id) => tx.get(ticketRef(id))),
+          );
 
-        // 5. Prochain ticket en attente (hors ticket pris)
-        const remaining = allBlockNumbers
-          .filter((n) => n.status === "waiting" && n.id !== candidateId)
-          .sort((a, b) => a.number - b.number);
-        const nextWaitingNumberValue =
-          remaining.length > 0 ? remaining[0].number : null;
+          // Prochain ticket réellement en attente, relu dans la transaction
+          let nextWaitingNumberValue: number | null = null;
+          const lookahead = fifo
+            .filter((id) => id !== candidateId)
+            .slice(0, NEXT_LOOKAHEAD);
+          for (const id of lookahead) {
+            const snap = await tx.get(ticketRef(id));
+            if (snap.exists() && snap.data().status === "waiting") {
+              nextWaitingNumberValue = Number(snap.data().number);
+              break;
+            }
+          }
 
-        const data = ticketSnap.data();
-        const ticketNumber = Number(data.number);
+          const now = Timestamp.now();
 
-        // 6. queue_state : champs legacy + champs du bloc, gardés synchronisés
-        const updatePayload: Record<string, any> = {
-          updatedAt: now,
-          currentNumber: ticketNumber,
-          nextNumber: nextWaitingNumberValue,
-          currentAssistantId: assistantId || null,
-          calledAt: now,
-        };
-        if (blockKey) {
-          updatePayload[`currentNumber${blockKey}`] = ticketNumber;
-          updatePayload[`nextNumber${blockKey}`] = nextWaitingNumberValue;
-          updatePayload[`currentAssistantId${blockKey}`] = assistantId || null;
-          updatePayload[`calledAt${blockKey}`] = now;
-        }
-        tx.set(stateRef, updatePayload, { merge: true });
+          // 3. Clôturer le ticket précédent de ce box (avec sa durée de service)
+          myCurrentSnaps.forEach((snap) => {
+            if (!snap.exists() || snap.data().status !== "current") return;
+            if (snap.data().assistantId !== assistantId) return;
+            const prev = snap.data();
+            const update: Record<string, any> = {
+              status: "completed",
+              completedAt: now,
+            };
+            if (prev.calledAt?.toMillis && prev.serviceDurationSeconds == null) {
+              update.serviceDurationSeconds = Math.floor(
+                (now.toMillis() - prev.calledAt.toMillis()) / 1000,
+              );
+            }
+            tx.update(snap.ref, update);
+          });
 
-        return {
-          id: candidateId,
-          number: ticketNumber,
-          block: (data.block as string) || null,
-          status: "current",
-          assistantId: assistantId || null,
-          assistantName: assistantName || null,
-          createdAt: timestampToDate(data.createdAt),
-          calledAt: now.toDate(),
-          completedAt: null,
-        } satisfies QueueNumber;
-      });
+          // 4. Prendre le ticket pour ce box
+          tx.update(ticketRef(candidateId), {
+            status: "current",
+            assistantId: assistantId || null,
+            assistantName: assistantName || null,
+            calledAt: now,
+          });
+
+          const data = ticketSnap.data();
+          const ticketNumber = Number(data.number);
+
+          // 5. queue_state : champs legacy + champs du bloc, gardés synchronisés
+          const updatePayload: Record<string, any> = {
+            updatedAt: now,
+            currentNumber: ticketNumber,
+            nextNumber: nextWaitingNumberValue,
+            currentAssistantId: assistantId || null,
+            calledAt: now,
+          };
+          if (blockKey) {
+            updatePayload[`currentNumber${blockKey}`] = ticketNumber;
+            updatePayload[`nextNumber${blockKey}`] = nextWaitingNumberValue;
+            updatePayload[`currentAssistantId${blockKey}`] =
+              assistantId || null;
+            updatePayload[`calledAt${blockKey}`] = now;
+          }
+          tx.set(stateRef, updatePayload, { merge: true });
+
+          return {
+            id: candidateId,
+            number: ticketNumber,
+            block: (data.block as string) || null,
+            status: "current",
+            assistantId: assistantId || null,
+            assistantName: assistantName || null,
+            createdAt: timestampToDate(data.createdAt),
+            calledAt: now.toDate(),
+            completedAt: null,
+          } satisfies QueueNumber;
+        },
+        // Plusieurs box peuvent se disputer les mêmes tickets : on laisse de
+        // la marge aux rejeux avant d'abandonner.
+        { maxAttempts: 10 },
+      );
     } catch (error) {
       if (error instanceof TicketAlreadyTakenError) {
-        if (ticketId) {
-          throw new Error("Ce ticket vient d'être appelé par un autre box.");
-        }
-        continue; // pris par un autre box : on tente le suivant
+        continue; // pris par un autre box : ticket suivant en FIFO
       }
       throw error;
     }
