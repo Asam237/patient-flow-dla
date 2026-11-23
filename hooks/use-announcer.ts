@@ -87,6 +87,9 @@ export function useAnnouncer() {
     }
   }, []);
 
+  // Delay between the start of sound.mp3 and the start of the spoken text.
+  const VOICE_DELAY_MS = 3000;
+
   const playNotificationSound = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
       if (
@@ -101,7 +104,7 @@ export function useAnnouncer() {
           source.buffer = audioBufferRef.current!;
           source.connect(ctx.destination);
           source.start(0);
-          setTimeout(() => resolve(), 600);
+          setTimeout(() => resolve(), VOICE_DELAY_MS);
         };
 
         if (ctx.state === "suspended") {
@@ -119,7 +122,7 @@ export function useAnnouncer() {
         const audio = audioRef.current;
         audio.currentTime = 0;
         audio.play().catch(() => {});
-        setTimeout(() => resolve(), 600);
+        setTimeout(() => resolve(), VOICE_DELAY_MS);
         return;
       }
 
