@@ -2,8 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { doc, updateDoc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { callNextNumber, formatNumberToCode } from "@/lib/queue-service";
 import {
   useQueueHistory,
@@ -86,7 +84,11 @@ export default function AssistantPage() {
   const isMyTurn = user ? blockCurrentAssistantId === user.id : false;
 
   useEffect(() => {
-    const currentTicket = blockNumbers.find((n) => n.status === "current");
+    // Plusieurs box d'un bloc peuvent avoir un ticket en cours : le chrono
+    // suit celui affiché comme ticket actuel du bloc.
+    const currentTicket = blockNumbers.find(
+      (n) => n.status === "current" && n.number === blockCurrentNumber,
+    );
     if (!currentTicket?.calledAt) {
       setElapsedSeconds(0);
       return;
@@ -100,7 +102,7 @@ export default function AssistantPage() {
       );
     }, 1000);
     return () => clearInterval(interval);
-  }, [queueNumbers, myBlock]);
+  }, [queueNumbers, myBlock, blockCurrentNumber]);
 
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60)
@@ -108,17 +110,6 @@ export default function AssistantPage() {
       .padStart(2, "0");
     const s = (seconds % 60).toString().padStart(2, "0");
     return `${m}:${s}`;
-  }
-
-  async function markPreviousCompleted() {
-    const currentTicket = blockNumbers.find((n) => n.status === "current");
-    if (currentTicket?.calledAt) {
-      const elapsedMs = Date.now() - currentTicket.calledAt.getTime();
-      const elapsed = Math.floor(elapsedMs / 1000);
-      await updateDoc(doc(db, "queue_numbers", currentTicket.id), {
-        serviceDurationSeconds: elapsed,
-      });
-    }
   }
 
   async function handleCallNext() {
@@ -136,14 +127,12 @@ export default function AssistantPage() {
 
     try {
       setLoading(true);
-      await markPreviousCompleted();
-      const { data: called, error }: any = await callNextNumber(
+      const called = await callNextNumber(
         user.id,
         user.name,
         undefined,
         myBlock,
       );
-      if (error) throw new Error(error.message);
       if (called) {
         toast({
           title: "Number Called",
@@ -165,14 +154,12 @@ export default function AssistantPage() {
     if (!user) return;
     try {
       setCallingId(ticketId);
-      await markPreviousCompleted();
-      const { data: called, error }: any = await callNextNumber(
+      const called = await callNextNumber(
         user.id,
         user.name,
         ticketId,
         myBlock,
       );
-      if (error) throw new Error(error.message);
       if (called) {
         toast({
           title: "Number Called",
@@ -452,7 +439,7 @@ export default function AssistantPage() {
                                     {formatDuration(num.serviceDurationSeconds)}
                                   </span>
                                 )}
-                                {isCurrent && isMyTurn && (
+                                {isCurrent && num.number === blockCurrentNumber && (
                                   <span className="text-[11px] text-blue-500 tabular-nums font-semibold">
                                     {formatDuration(elapsedSeconds)}
                                   </span>

@@ -5,7 +5,7 @@ import { doc, collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useUsers } from "@/lib/queue-hooks";
 import { Card, CardContent } from "@/components/ui/card";
-import { Clock, Volume2, Users } from "lucide-react";
+import { ArrowRight, Clock, Volume2, Users } from "lucide-react";
 import type { User, QueueNumber } from "@/lib/types";
 import images from "@/assets/pictures";
 import Image from "next/image";
@@ -22,12 +22,10 @@ export default function DisplayPage() {
   const [time, setTime] = useState<string>("");
   const [isAudioReady, setIsAudioReady] = useState(false);
 
-  const previousNumberARef = useRef<number | null>(null);
-  const previousNumberBRef = useRef<number | null>(null);
-  const previousCalledAtARef = useRef<number | null>(null);
-  const previousCalledAtBRef = useRef<number | null>(null);
-  const hasInitializedARef = useRef<boolean>(false);
-  const hasInitializedBRef = useRef<boolean>(false);
+  // calledAt (ms) déjà annoncé pour chaque ticket : détecte chaque appel
+  // individuellement, même quand plusieurs box appellent au même moment.
+  const announcedCallsRef = useRef<Map<string, number>>(new Map());
+  const hasInitializedCallsRef = useRef<boolean>(false);
   const assistantsRef = useRef<User[]>([]);
   useEffect(() => {
     assistantsRef.current = assistants;
@@ -80,78 +78,7 @@ export default function DisplayPage() {
     const unsubscribeState = onSnapshot(
       doc(db, "queue_state", "current"),
       (docSnap) => {
-        if (!docSnap.exists()) return;
-        const data = docSnap.data();
-
-        // =========================
-        // DÉTECTION BLOCK A
-        // =========================
-        const newNumberA = data.currentNumberA ?? null;
-        const calledAtAMillis: number | null =
-          data.calledAtA?.toMillis?.() ?? null;
-
-        if (!hasInitializedARef.current) {
-          // Premier chargement : initialisation sans vocal
-          hasInitializedARef.current = true;
-          previousCalledAtARef.current = calledAtAMillis;
-          previousNumberARef.current = newNumberA;
-        } else if (
-          newNumberA !== null &&
-          calledAtAMillis !== null &&
-          calledAtAMillis !== previousCalledAtARef.current
-        ) {
-          // Nouvel appel détecté
-          previousCalledAtARef.current = calledAtAMillis;
-          previousNumberARef.current = newNumberA;
-
-          const assistantId = data.currentAssistantIdA;
-          const assistantName =
-            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
-            "Guichet";
-
-          // UN SEUL PUSH DANS LA FILE D'ATTENTE
-          enqueue(
-            buildTicketAnnouncement(newNumberA, assistantName, "Block A"),
-          );
-          setIsNewNumberA(true);
-          setTimeout(() => setIsNewNumberA(false), 6000);
-        }
-
-        // =========================
-        // DÉTECTION BLOCK B
-        // =========================
-        const newNumberB = data.currentNumberB ?? null;
-        const calledAtBMillis: number | null =
-          data.calledAtB?.toMillis?.() ?? null;
-
-        if (!hasInitializedBRef.current) {
-          // Premier chargement : initialisation sans vocal
-          hasInitializedBRef.current = true;
-          previousCalledAtBRef.current = calledAtBMillis;
-          previousNumberBRef.current = newNumberB;
-        } else if (
-          newNumberB !== null &&
-          calledAtBMillis !== null &&
-          calledAtBMillis !== previousCalledAtBRef.current
-        ) {
-          // Nouvel appel détecté
-          previousCalledAtBRef.current = calledAtBMillis;
-          previousNumberBRef.current = newNumberB;
-
-          const assistantId = data.currentAssistantIdB;
-          const assistantName =
-            assistantsRef.current.find((a) => a.id === assistantId)?.name ||
-            "Guichet";
-
-          // UN SEUL PUSH DANS LA FILE D'ATTENTE
-          enqueue(
-            buildTicketAnnouncement(newNumberB, assistantName, "Block B"),
-          );
-          setIsNewNumberB(true);
-          setTimeout(() => setIsNewNumberB(false), 6000);
-        }
-
-        setQueueState(data);
+        if (docSnap.exists()) setQueueState(docSnap.data());
       },
     );
 
@@ -176,6 +103,44 @@ export default function DisplayPage() {
           })
           .sort((a, b) => a.number - b.number);
         setQueueNumbers(numbers);
+
+        // Nouveaux appels = tickets "current" dont le calledAt n'a pas encore
+        // été annoncé. Au premier chargement on mémorise sans annoncer.
+        const seen = announcedCallsRef.current;
+        const newCalls = numbers
+          .filter(
+            (n) =>
+              n.status === "current" &&
+              n.calledAt &&
+              seen.get(n.id) !== n.calledAt.getTime(),
+          )
+          .sort((a, b) => a.calledAt!.getTime() - b.calledAt!.getTime());
+
+        newCalls.forEach((n) => seen.set(n.id, n.calledAt!.getTime()));
+        if (!hasInitializedCallsRef.current) {
+          hasInitializedCallsRef.current = true;
+          return;
+        }
+
+        newCalls.forEach((n) => {
+          const isBlockB = (n.block || "").toLowerCase() === "block b";
+          const assistantName =
+            n.assistantName ||
+            assistantsRef.current.find((a) => a.id === n.assistantId)?.name ||
+            "Guichet";
+
+          enqueue(
+            buildTicketAnnouncement(
+              n.number,
+              assistantName,
+              isBlockB ? "Block B" : "Block A",
+            ),
+          );
+
+          const flash = isBlockB ? setIsNewNumberB : setIsNewNumberA;
+          flash(true);
+          setTimeout(() => flash(false), 6000);
+        });
       },
     );
 
@@ -215,6 +180,12 @@ export default function DisplayPage() {
     (n) =>
       (n as any).block?.toLowerCase() === "block b" && n.status === "waiting",
   ).length;
+
+  // 3 derniers appels, tous blocs confondus (le plus récent en premier)
+  const lastCalls = queueNumbers
+    .filter((n) => n.calledAt && n.status !== "waiting")
+    .sort((a, b) => b.calledAt!.getTime() - a.calledAt!.getTime())
+    .slice(0, 3);
 
   return (
     <div className="h-screen bg-[#084B9A] text-slate-900 overflow-hidden font-sans flex flex-col p-6 lg:p-10">
@@ -531,6 +502,50 @@ export default function DisplayPage() {
           </CardContent>
         </Card>
       </main>
+
+      {/* Historique des 3 derniers appels */}
+      <div className="mb-4 flex items-stretch bg-white rounded-3xl shadow-xl overflow-hidden">
+        <div className="flex flex-col justify-center gap-0.5 px-6 bg-slate-100 text-slate-700">
+          <span className="text-base font-black uppercase tracking-wide">
+            Derniers appels
+          </span>
+          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+            Last calls
+          </span>
+        </div>
+
+        {lastCalls.length === 0 ? (
+          <p className="flex-1 px-6 py-4 text-lg font-semibold text-slate-400">
+            Aucun appel pour le moment / No calls yet
+          </p>
+        ) : (
+          <div className="flex-1 grid grid-cols-3 divide-x divide-slate-100">
+            {lastCalls.map((n, i) => {
+              const isBlockB = (n.block || "").toLowerCase() === "block b";
+              return (
+                <div
+                  key={`${n.id}-${n.calledAt!.getTime()}`}
+                  className={`flex items-center justify-center gap-4 px-4 py-3 ${
+                    i === 0 ? "" : "opacity-60"
+                  }`}
+                >
+                  <span
+                    className={`text-4xl font-black tabular-nums ${
+                      isBlockB ? "text-purple-600" : "text-blue-600"
+                    }`}
+                  >
+                    {formatTicket(n.number)}
+                  </span>
+                  <ArrowRight className="w-6 h-6 text-slate-300 shrink-0" />
+                  <span className="text-2xl font-bold text-slate-800 truncate">
+                    {n.assistantName || "Guichet"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <footer className="flex justify-center items-center py-2">
         <p className="text-white/30 text-sm font-medium tracking-widest uppercase">
