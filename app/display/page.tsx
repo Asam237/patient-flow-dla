@@ -181,11 +181,21 @@ export default function DisplayPage() {
       (n as any).block?.toLowerCase() === "block b" && n.status === "waiting",
   ).length;
 
-  // 3 derniers appels, tous blocs confondus (le plus récent en premier)
-  const lastCalls = queueNumbers
-    .filter((n) => n.calledAt && n.status !== "waiting")
-    .sort((a, b) => b.calledAt!.getTime() - a.calledAt!.getTime())
-    .slice(0, 3);
+  // 3 derniers appels de chaque bloc (le plus récent en premier)
+  const getLastCalls = (block: string) =>
+    queueNumbers
+      .filter(
+        (n) =>
+          (n.block || "").toLowerCase() === block &&
+          n.calledAt &&
+          n.status !== "waiting",
+      )
+      .sort((a, b) => b.calledAt!.getTime() - a.calledAt!.getTime())
+      .slice(0, 3);
+  const lastCallsByBlock = [
+    { label: "Block A", isBlockB: false, calls: getLastCalls("block a") },
+    { label: "Block B", isBlockB: true, calls: getLastCalls("block b") },
+  ];
 
   return (
     <div className="h-screen bg-[#084B9A] text-slate-900 overflow-hidden font-sans flex flex-col p-6 lg:p-10">
@@ -503,7 +513,7 @@ export default function DisplayPage() {
         </Card>
       </main>
 
-      {/* Historique des 3 derniers appels */}
+      {/* Historique des 3 derniers appels par bloc */}
       <div className="mb-4 flex items-stretch bg-white rounded-3xl shadow-xl overflow-hidden">
         <div className="flex flex-col justify-center gap-0.5 px-6 bg-slate-100 text-slate-700">
           <span className="text-base font-black uppercase tracking-wide">
@@ -514,37 +524,56 @@ export default function DisplayPage() {
           </span>
         </div>
 
-        {lastCalls.length === 0 ? (
-          <p className="flex-1 px-6 py-4 text-lg font-semibold text-slate-400">
-            Aucun appel pour le moment / No calls yet
-          </p>
-        ) : (
-          <div className="flex-1 grid grid-cols-3 divide-x divide-slate-100">
-            {lastCalls.map((n, i) => {
-              const isBlockB = (n.block || "").toLowerCase() === "block b";
-              return (
-                <div
-                  key={`${n.id}-${n.calledAt!.getTime()}`}
-                  className={`flex items-center justify-center gap-4 px-4 py-3 ${
-                    i === 0 ? "" : "opacity-60"
-                  }`}
-                >
-                  <span
-                    className={`text-4xl font-black tabular-nums ${
-                      isBlockB ? "text-purple-600" : "text-blue-600"
-                    }`}
-                  >
-                    {formatTicket(n.number)}
-                  </span>
-                  <ArrowRight className="w-6 h-6 text-slate-300 shrink-0" />
-                  <span className="text-2xl font-bold text-slate-800 truncate">
-                    {n.assistantName || "Guichet"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <div className="flex-1 flex flex-col divide-y divide-slate-100">
+          {lastCallsByBlock.map(({ label, isBlockB, calls }) => (
+            <div key={label} className="flex items-stretch">
+              <div
+                className={`flex items-center justify-center w-32 shrink-0 text-sm font-black uppercase tracking-widest ${
+                  isBlockB
+                    ? "bg-purple-50 text-purple-600"
+                    : "bg-blue-50 text-blue-600"
+                }`}
+              >
+                {label}
+              </div>
+              <div className="flex-1 grid grid-cols-3 divide-x divide-slate-100">
+                {[0, 1, 2].map((i) => {
+                  const n = calls[i];
+                  if (!n) {
+                    return (
+                      <div
+                        key={`empty-${i}`}
+                        className="flex items-center justify-center px-4 py-2 text-2xl font-black text-slate-200"
+                      >
+                        --
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={`${n.id}-${n.calledAt!.getTime()}`}
+                      className={`flex items-center justify-center gap-4 px-4 py-2 ${
+                        i === 0 ? "" : "opacity-60"
+                      }`}
+                    >
+                      <span
+                        className={`text-3xl font-black tabular-nums ${
+                          isBlockB ? "text-purple-600" : "text-blue-600"
+                        }`}
+                      >
+                        {formatTicket(n.number)}
+                      </span>
+                      <ArrowRight className="w-5 h-5 text-slate-300 shrink-0" />
+                      <span className="text-xl font-bold text-slate-800 truncate">
+                        {n.assistantName || "Guichet"}{" "}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <footer className="flex justify-center items-center py-2">
