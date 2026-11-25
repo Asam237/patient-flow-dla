@@ -41,6 +41,37 @@ export function formatNumberToCode(num: number): string {
 }
 
 /**
+ * Ordre d'appel des tickets en attente d'un bloc :
+ * 1. les tickets prioritaires d'abord (le premier mis en priorité passe en premier) ;
+ * 2. puis le reste en FIFO (numéro croissant).
+ */
+export function compareWaitingOrder(
+  a: { number: number; priorityAt?: Date | null },
+  b: { number: number; priorityAt?: Date | null },
+): number {
+  const pa = a.priorityAt ? a.priorityAt.getTime() : null;
+  const pb = b.priorityAt ? b.priorityAt.getTime() : null;
+  if (pa != null && pb != null) return pa - pb || a.number - b.number;
+  if (pa != null) return -1;
+  if (pb != null) return 1;
+  return a.number - b.number;
+}
+
+/**
+ * Convertit une saisie utilisateur en numéro de ticket :
+ * "B05" -> 105, "a7" -> 7, "105" -> 105. Retourne null si invalide.
+ */
+export function parseTicketCode(input: string): number | null {
+  const value = input.trim().toUpperCase();
+  const coded = value.match(/^([A-Z])\s*(\d{1,2})$/);
+  if (coded) {
+    return (coded[1].charCodeAt(0) - 65) * 100 + parseInt(coded[2], 10);
+  }
+  if (/^\d+$/.test(value)) return parseInt(value, 10);
+  return null;
+}
+
+/**
  * Ajoute un numéro à la queue pour un bloc spécifique
  */
 export async function addNumberToQueue(
@@ -153,6 +184,7 @@ export async function getNextWaitingNumber(
         completedAt: data.completedAt
           ? timestampToDate(data.completedAt)
           : null,
+        priorityAt: data.priorityAt ? timestampToDate(data.priorityAt) : null,
       };
     })
     .filter((num) => {
@@ -160,7 +192,7 @@ export async function getNextWaitingNumber(
       if (blockNorm) return num.block.toLowerCase() === blockNorm;
       return true;
     })
-    .sort((a, b) => a.number - b.number);
+    .sort(compareWaitingOrder);
 
   return waitingNumbers.length > 0 ? waitingNumbers[0] : null;
 }
@@ -206,6 +238,9 @@ export async function callNextNumber(
       block: ((d.data().block as string) || "").toLowerCase(),
       status: d.data().status as string,
       assistantId: (d.data().assistantId as string) || null,
+      priorityAt: d.data().priorityAt
+        ? timestampToDate(d.data().priorityAt)
+        : null,
     }))
     .filter((n) => (blockNorm ? n.block === blockNorm : true));
 
@@ -214,10 +249,10 @@ export async function callNextNumber(
     .filter((n) => n.status === "current" && n.assistantId === assistantId)
     .map((n) => n.id);
 
-  // File FIFO : tickets en attente du bloc, du plus petit au plus grand
+  // File d'appel : tickets prioritaires d'abord, puis FIFO (numéro croissant)
   const fifo = allBlockNumbers
     .filter((n) => n.status === "waiting")
-    .sort((a, b) => a.number - b.number)
+    .sort(compareWaitingOrder)
     .map((n) => n.id);
 
   // 2. Candidats : le ticket demandé d'abord, puis le reste de la file en FIFO
@@ -353,6 +388,7 @@ export async function getAllQueueNumbers(): Promise<QueueNumber[]> {
         completedAt: data.completedAt
           ? timestampToDate(data.completedAt)
           : null,
+        priorityAt: data.priorityAt ? timestampToDate(data.priorityAt) : null,
       };
     })
     .sort((a, b) => a.number - b.number);
@@ -398,6 +434,107 @@ export async function completeCurrentNumber(block?: string): Promise<void> {
   }
 
   await setDoc(stateRef, updatePayload, { merge: true });
+}
+
+/**
+ * Recalcule le "prochain numéro" d'un bloc dans queue_state (champs du bloc
+ * + champ legacy), selon l'ordre d'appel (prioritaires puis FIFO).
+ */
+async function refreshNextNumber(block: string): Promise<void> {
+  const blockNorm = block.toLowerCase();
+  const blockKey =
+    blockNorm === "block a" ? "A" : blockNorm === "block b" ? "B" : null;
+  if (!blockKey) return;
+
+  const next = await getNextWaitingNumber(blockNorm);
+  await setDoc(
+    doc(db, QUEUE_STATE_COLLECTION, "current"),
+    {
+      [`nextNumber${blockKey}`]: next?.number ?? null,
+      nextNumber: next?.number ?? null,
+      updatedAt: Timestamp.now(),
+    },
+    { merge: true },
+  );
+}
+
+/**
+ * Met un ticket en priorité dans un bloc : il devient immédiatement le
+ * prochain ticket appelé par les box de ce bloc.
+ * - ticket en attente dans le bloc : marqué prioritaire ;
+ * - ticket absent de la file : créé directement comme prioritaire ;
+ * - ticket déjà en cours, ou présent dans l'autre bloc : refusé.
+ */
+export async function setTicketPriority(
+  number: number,
+  block: "block a" | "block b",
+): Promise<QueueNumber> {
+  const blockNorm = block.toLowerCase();
+  const snapshot = await getDocs(collection(db, QUEUE_NUMBERS_COLLECTION));
+  const sameNumber = snapshot.docs.filter(
+    (d) =>
+      Number(d.data().number) === number && d.data().status !== "completed",
+  );
+
+  const inOtherBlock = sameNumber.find(
+    (d) => ((d.data().block as string) || "").toLowerCase() !== blockNorm,
+  );
+  if (inOtherBlock) {
+    throw new Error(
+      `Le ticket ${formatNumberToCode(number)} est déjà dans l'autre bloc.`,
+    );
+  }
+
+  const existing = sameNumber[0];
+  const now = Timestamp.now();
+  let ticketId: string;
+
+  if (existing) {
+    if (existing.data().status === "current") {
+      throw new Error(
+        `Le ticket ${formatNumberToCode(number)} est déjà en cours de service.`,
+      );
+    }
+    await updateDoc(existing.ref, { priorityAt: now });
+    ticketId = existing.id;
+  } else {
+    const ref = await addDoc(collection(db, QUEUE_NUMBERS_COLLECTION), {
+      number,
+      block: blockNorm,
+      status: "waiting",
+      assistantId: null,
+      assistantName: null,
+      createdAt: now,
+      calledAt: null,
+      completedAt: null,
+      priorityAt: now,
+    });
+    ticketId = ref.id;
+  }
+
+  await refreshNextNumber(blockNorm);
+
+  return {
+    id: ticketId,
+    number,
+    block: blockNorm,
+    status: "waiting",
+    createdAt: existing
+      ? timestampToDate(existing.data().createdAt)
+      : now.toDate(),
+    priorityAt: now.toDate(),
+  };
+}
+
+/** Retire la priorité d'un ticket : il reprend sa place normale en FIFO. */
+export async function removeTicketPriority(
+  ticketId: string,
+  block: string,
+): Promise<void> {
+  await updateDoc(doc(db, QUEUE_NUMBERS_COLLECTION, ticketId), {
+    priorityAt: null,
+  });
+  await refreshNextNumber(block);
 }
 
 export async function deleteQueueNumber(id: string): Promise<void> {

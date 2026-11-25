@@ -23,6 +23,8 @@ export interface QueueNumber {
   calledAt?: Date | null;
   completedAt?: Date | null;
   serviceDurationSeconds?: number;
+  /** Date de mise en priorité : un ticket "waiting" prioritaire passe devant la file FIFO. */
+  priorityAt?: Date | null;
 }
 
 export interface QueueState {

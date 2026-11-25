@@ -11,6 +11,7 @@ import images from "@/assets/pictures";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { formatTicket } from "@/lib/utils";
+import { compareWaitingOrder } from "@/lib/queue-service";
 import { useAnnouncer, type Announcement } from "@/hooks/use-announcer";
 
 export default function DisplayPage() {
@@ -99,6 +100,7 @@ export default function DisplayPage() {
               calledAt: data.calledAt?.toDate() || null,
               completedAt: data.completedAt?.toDate() || null,
               serviceDurationSeconds: data.serviceDurationSeconds || null,
+              priorityAt: data.priorityAt?.toDate?.() || null,
             };
           })
           .sort((a, b) => a.number - b.number);
@@ -180,6 +182,18 @@ export default function DisplayPage() {
     (n) =>
       (n as any).block?.toLowerCase() === "block b" && n.status === "waiting",
   ).length;
+
+  // Prochain ticket de chaque bloc, calculé en direct depuis la file selon
+  // l'ordre d'appel (prioritaires d'abord, puis FIFO) : une mise en priorité
+  // apparaît immédiatement dans "Suivant / Next".
+  const getNextTicket = (block: string) =>
+    queueNumbers
+      .filter(
+        (n) => (n.block || "").toLowerCase() === block && n.status === "waiting",
+      )
+      .sort(compareWaitingOrder)[0] ?? null;
+  const nextTicketA = getNextTicket("block a");
+  const nextTicketB = getNextTicket("block b");
 
   // 3 derniers appels de chaque bloc (le plus récent en premier)
   const getLastCalls = (block: string) =>
@@ -369,10 +383,13 @@ export default function DisplayPage() {
                 <span className="text-xs font-black text-blue-400 uppercase tracking-widest">
                   Suivant / Next
                 </span>
+                {nextTicketA?.priorityAt && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wider">
+                    Prioritaire / Priority
+                  </span>
+                )}
                 <span className="text-2xl font-black text-blue-300 tabular-nums ml-auto">
-                  {queueState?.nextNumberA != null
-                    ? formatTicket(queueState.nextNumberA)
-                    : "--"}
+                  {nextTicketA ? formatTicket(nextTicketA.number) : "--"}
                 </span>
               </div>
             </div>
@@ -451,10 +468,13 @@ export default function DisplayPage() {
                 <span className="text-xs font-black text-purple-400 uppercase tracking-widest">
                   Suivant / Next
                 </span>
+                {nextTicketB?.priorityAt && (
+                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-black uppercase tracking-wider">
+                    Prioritaire / Priority
+                  </span>
+                )}
                 <span className="text-2xl font-black text-purple-300 tabular-nums ml-auto">
-                  {queueState?.nextNumberB != null
-                    ? formatTicket(queueState.nextNumberB)
-                    : "--"}
+                  {nextTicketB ? formatTicket(nextTicketB.number) : "--"}
                 </span>
               </div>
             </div>

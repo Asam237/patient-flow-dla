@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { callNextNumber, formatNumberToCode } from "@/lib/queue-service";
+import {
+  callNextNumber,
+  compareWaitingOrder,
+  formatNumberToCode,
+} from "@/lib/queue-service";
 import {
   useQueueHistory,
   useQueueNumbers,
@@ -66,7 +70,9 @@ export default function AssistantPage() {
   );
 
   // Nombre de tickets en attente pour le bloc concerné
-  const waitingNumbers = blockNumbers.filter((n) => n.status === "waiting");
+  const waitingNumbers = blockNumbers
+    .filter((n) => n.status === "waiting")
+    .sort(compareWaitingOrder);
   const waitingCount = waitingNumbers.length;
 
   // Prochain ticket en FIFO, calculé en temps réel depuis la file du bloc
@@ -416,6 +422,11 @@ export default function AssistantPage() {
                                         ? "Waiting"
                                         : "Done"}
                                   </Badge>
+                                  {isWaiting && num.priorityAt && (
+                                    <Badge className="text-[10px] w-fit uppercase px-1.5 py-0 border-none bg-red-600">
+                                      Prioritaire
+                                    </Badge>
+                                  )}
                                   {numAssistant && (
                                     <div className="flex items-center gap-1.5">
                                       <div

@@ -7,6 +7,10 @@ import {
   deleteQueueNumber,
   resetQueue,
   formatNumberToCode,
+  compareWaitingOrder,
+  parseTicketCode,
+  setTicketPriority,
+  removeTicketPriority,
 } from "@/lib/queue-service";
 import {
   useQueueHistory,
@@ -45,6 +49,8 @@ import {
   BarChart3,
   AlertTriangle,
   Pencil,
+  Zap,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { QueueNumber, User } from "@/lib/types";
@@ -71,6 +77,188 @@ import {
 } from "@/components/ui/alert-dialog";
 
 type Block = "block a" | "block b";
+
+/**
+ * Saisie d'un ticket prioritaire : le ticket choisi devient immédiatement le
+ * prochain appelé dans le bloc sélectionné (avant la file FIFO).
+ */
+function PriorityPanel({ queueNumbers }: { queueNumbers: QueueNumber[] }) {
+  const { toast } = useToast();
+  const [block, setBlock] = useState<Block>("block a");
+  const [input, setInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const priorityByBlock = (b: Block) =>
+    queueNumbers
+      .filter(
+        (n) =>
+          n.status === "waiting" &&
+          n.priorityAt &&
+          (n.block || "block a").toLowerCase() === b,
+      )
+      .sort(compareWaitingOrder);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const number = parseTicketCode(input);
+    if (number == null) {
+      toast({
+        title: "Numéro invalide",
+        description: "Saisissez un numéro (ex : 105) ou un code (ex : B05).",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      setSubmitting(true);
+      await setTicketPriority(number, block);
+      toast({
+        title: "Priorité enregistrée",
+        description: `Le ticket ${formatNumberToCode(number)} est le prochain à appeler au ${block.toUpperCase()}.`,
+      });
+      setInput("");
+    } catch (error: any) {
+      toast({
+        title: "Erreur",
+        description: error.message || "Impossible de définir la priorité.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemove(ticket: QueueNumber) {
+    try {
+      await removeTicketPriority(ticket.id, ticket.block || "block a");
+      toast({
+        title: "Priorité retirée",
+        description: `Le ticket ${formatNumberToCode(ticket.number)} reprend sa place dans la file.`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Erreur",
+        description: error.message || "Impossible de retirer la priorité.",
+        variant: "destructive",
+      });
+    }
+  }
+
+  return (
+    <Card className="border-none shadow-xl shadow-indigo-900/5 bg-white overflow-hidden rounded-3xl">
+      <CardHeader className="bg-red-50/50 border-b border-red-100">
+        <CardTitle className="text-slate-800 text-lg flex items-center gap-2">
+          <Zap className="w-4 h-4 text-red-600" />
+          Priorité
+        </CardTitle>
+        <CardDescription>
+          Le ticket saisi devient immédiatement le prochain numéro appelé dans
+          le bloc choisi.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-6 space-y-6">
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-wrap gap-3 items-end"
+        >
+          <div className="space-y-2">
+            <Label>Bloc</Label>
+            <div className="flex gap-2">
+              {(
+                [
+                  { value: "block a", label: "Bloc A" },
+                  { value: "block b", label: "Bloc B" },
+                ] as const
+              ).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setBlock(opt.value)}
+                  className={`h-14 px-5 rounded-xl text-sm font-bold border transition-all uppercase ${
+                    block === opt.value
+                      ? opt.value === "block a"
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-cyan-600 text-white border-cyan-600"
+                      : "bg-white text-slate-500 border-slate-200"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-2 flex-1 min-w-[160px]">
+            <Label htmlFor="priority-number">Numéro prioritaire</Label>
+            <Input
+              id="priority-number"
+              placeholder={
+                block === "block a" ? "ex : A12 ou 12" : "ex : B05 ou 105"
+              }
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              className="h-14 text-lg rounded-xl"
+            />
+          </div>
+          <Button
+            type="submit"
+            disabled={submitting || !input.trim()}
+            className="h-14 px-6 rounded-xl bg-red-600 hover:bg-red-700 text-white"
+          >
+            {submitting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <>Make a priority</>
+            )}
+          </Button>
+        </form>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          {(["block a", "block b"] as const).map((b) => {
+            const tickets = priorityByBlock(b);
+            return (
+              <div
+                key={b}
+                className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50"
+              >
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">
+                  {b === "block a" ? "Bloc A" : "Bloc B"} — Priority Cases
+                  Pending
+                </p>
+                {tickets.length === 0 ? (
+                  <p className="text-sm text-slate-400">None</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {tickets.map((t, i) => (
+                      <span
+                        key={t.id}
+                        className="inline-flex items-center gap-2 pl-3 pr-1 py-1 rounded-full bg-white border border-red-200 text-sm font-bold text-red-700"
+                      >
+                        {i === 0 && (
+                          <span className="text-[10px] uppercase text-red-500">
+                            Suivant / Next
+                          </span>
+                        )}
+                        {formatNumberToCode(t.number)}
+                        <button
+                          type="button"
+                          onClick={() => handleRemove(t)}
+                          className="p-1 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-50"
+                          aria-label={`Retirer la priorité du ticket ${formatNumberToCode(t.number)}`}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function BlockQueueList({
   label,
@@ -207,6 +395,11 @@ function BlockQueueList({
                         ? "Waiting"
                         : "Completed"}
                   </Badge>
+                  {num.status === "waiting" && num.priorityAt && (
+                    <Badge className="w-fit text-[10px] uppercase font-bold py-0.5 rounded-md border-none mb-3 bg-red-600">
+                      Prioritaire
+                    </Badge>
+                  )}
                   {numAssistant && (
                     <div className="flex items-center gap-2 mt-auto pt-2 border-t border-slate-50">
                       <Circle
@@ -567,9 +760,11 @@ export default function AdminPage() {
   }
 
   async function handleReset() {
-    if (confirm(
+    if (
+      confirm(
         "Are you sure? This will clear the queue for both blocks. Statistics are kept.",
-      )) {
+      )
+    ) {
       try {
         setLoading(true);
         await resetQueue();
@@ -818,6 +1013,9 @@ export default function AdminPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Priorité — admin et dispatching */}
+            <PriorityPanel queueNumbers={queueNumbers} />
 
             {/* Team Management — CACHÉ POUR LES DISPATCHERS */}
             {isAdmin && (
@@ -1099,7 +1297,9 @@ export default function AdminPage() {
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="edit-startNumber">Starting Number</Label>
+                        <Label htmlFor="edit-startNumber">
+                          Starting Number
+                        </Label>
                         <Input
                           id="edit-startNumber"
                           type="number"

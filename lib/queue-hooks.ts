@@ -15,6 +15,7 @@ function mapQueueNumber(id: string, data: any): QueueNumber {
     calledAt: data.calledAt?.toDate() || null,
     completedAt: data.completedAt?.toDate() || null,
     serviceDurationSeconds: data.serviceDurationSeconds || null,
+    priorityAt: data.priorityAt?.toDate?.() || null,
   };
 }
 
