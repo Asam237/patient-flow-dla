@@ -88,7 +88,7 @@ export function useAnnouncer() {
   }, []);
 
   // Delay between the start of sound.mp3 and the start of the spoken text.
-  const VOICE_DELAY_MS = 3000;
+  const VOICE_DELAY_MS = 1000;
 
   const playNotificationSound = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
